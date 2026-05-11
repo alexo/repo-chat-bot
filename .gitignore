@@ -1,0 +1,4 @@
+.env
+repo-chat-bot
+*.log
+.DS_Store
