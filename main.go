@@ -52,22 +52,25 @@ func main() {
 
 	b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
 	if err != nil {
-		log.Fatalf("telegram: %v", err)
+		log.Printf("WARNING: Telegram bot failed to initialize: %v. Continuing without Telegram.", err)
+	} else {
+		log.Println("telegram bot starting")
+		go b.Start(ctx)
 	}
-
-	log.Println("repo-chat-bot started")
 
 	if cfg.SlackAppToken != "" && cfg.SlackBotToken != "" {
 		slackBot, err := NewSlackBot(cfg.SlackAppToken, cfg.SlackBotToken, a)
 		if err != nil {
 			log.Printf("failed to start slack bot: %v", err)
 		} else {
-			log.Println("slack bot started")
+			log.Println("slack bot starting")
 			go slackBot.Run(ctx)
 		}
 	}
 
-	b.Start(ctx)
+	log.Println("repo-chat-bot is running (press Ctrl+C to exit)")
+	<-ctx.Done()
+	log.Println("shutting down...")
 }
 
 func (a *app) handleMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
