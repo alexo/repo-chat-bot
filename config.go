@@ -12,6 +12,7 @@ type Config struct {
 	TelegramBotToken string
 	SlackAppToken    string
 	SlackBotToken    string
+	SlackDebug       bool
 	LLMProvider      string
 	LLMAPIKey        string
 	LLMModel         string
@@ -24,6 +25,7 @@ func LoadConfig() (*Config, error) {
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		SlackAppToken:    os.Getenv("SLACK_APP_TOKEN"),
 		SlackBotToken:    os.Getenv("SLACK_BOT_TOKEN"),
+		SlackDebug:       parseBoolEnv("SLACK_DEBUG"),
 		LLMProvider:      os.Getenv("LLM_PROVIDER"),
 		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
 		LLMModel:         os.Getenv("LLM_MODEL"),
@@ -62,12 +64,23 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
+func parseBoolEnv(name string) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	}
+	return false
+}
+
 func defaultModelFor(provider string) string {
 	switch provider {
 	case "anthropic":
 		return "claude-sonnet-4-6"
 	case "github":
 		return "gpt-4o"
+	case "openrouter":
+		return "openai/gpt-4o-mini"
 	}
 	return ""
 }

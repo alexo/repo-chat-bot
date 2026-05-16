@@ -26,6 +26,8 @@ func NewProvider(name, apiKey, model string, repo *Repo) (LLMProvider, error) {
 		return NewAnthropicProvider(apiKey, model, repo), nil
 	case "github":
 		return NewGitHubProvider(apiKey, model, repo), nil
+	case "openrouter":
+		return NewOpenRouterProvider(apiKey, model, repo), nil
 	default:
 		return nil, fmt.Errorf("unknown LLM provider %q", name)
 	}

@@ -39,6 +39,8 @@ func main() {
 	}
 	log.Printf("SUCCESS: Loaded REPO_PATH from config: %s", cfg.RepoPath)
 	log.Printf("SUCCESS: Repo root resolved to: %s", repo.Root())
+	log.Printf("SUCCESS: LLM provider: %s", cfg.LLMProvider)
+	log.Printf("SUCCESS: LLM model: %s", cfg.LLMModel)
 
 	llm, err := NewProvider(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, repo)
 	if err != nil {
@@ -59,7 +61,7 @@ func main() {
 	}
 
 	if cfg.SlackAppToken != "" && cfg.SlackBotToken != "" {
-		slackBot, err := NewSlackBot(cfg.SlackAppToken, cfg.SlackBotToken, a)
+		slackBot, err := NewSlackBot(cfg.SlackAppToken, cfg.SlackBotToken, cfg.SlackDebug, a)
 		if err != nil {
 			log.Printf("failed to start slack bot: %v", err)
 		} else {

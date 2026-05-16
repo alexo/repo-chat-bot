@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -18,24 +19,38 @@ var (
 )
 
 type SlackBot struct {
-	api    *slack.Client
-	socket *socketmode.Client
-	app    *app
+	api     *slack.Client
+	socket  *socketmode.Client
+	app     *app
+	debug   bool
+	mu      sync.RWMutex
+	threads map[string]bool
 }
 
-func NewSlackBot(appToken, botToken string, app *app) (*SlackBot, error) {
+func NewSlackBot(appToken, botToken string, debug bool, app *app) (*SlackBot, error) {
 	api := slack.New(botToken, slack.OptionAppLevelToken(appToken))
 	socket := socketmode.New(api)
 
 	return &SlackBot{
-		api:    api,
-		socket: socket,
-		app:    app,
+		api:     api,
+		socket:  socket,
+		app:     app,
+		debug:   debug,
+		threads: map[string]bool{},
 	}, nil
+}
+
+func (s *SlackBot) debugf(format string, args ...any) {
+	if s.debug {
+		log.Printf("Slack bot [debug]: "+format, args...)
+	}
 }
 
 func (s *SlackBot) Run(ctx context.Context) {
 	log.Println("Slack bot: starting event loop...")
+	if s.debug {
+		log.Println("Slack bot: debug mode enabled")
+	}
 	go func() {
 		for {
 			select {
@@ -43,10 +58,7 @@ func (s *SlackBot) Run(ctx context.Context) {
 				log.Println("Slack bot: context cancelled, stopping...")
 				return
 			case evt := <-s.socket.Events:
-				// Log the event type for debugging
-				if evt.Type != socketmode.EventTypeHello {
-					log.Printf("Slack bot: received event type: %v", evt.Type)
-				}
+				s.debugf("received event type: %v", evt.Type)
 
 				switch evt.Type {
 				case socketmode.EventTypeHello:
@@ -59,26 +71,35 @@ func (s *SlackBot) Run(ctx context.Context) {
 						}
 					}
 
-					log.Printf("Slack bot: Inner Event Type: %v", eventsAPI.InnerEvent.Type)
+					s.debugf("inner event type: %v", eventsAPI.InnerEvent.Type)
 
 					if eventsAPI.Type == slackevents.CallbackEvent {
 						innerEvent := eventsAPI.InnerEvent
 						switch ev := innerEvent.Data.(type) {
 						case *slackevents.MessageEvent:
-							log.Printf("Slack bot: Message from user %s in channel %s: %s", ev.User, ev.Channel, ev.Text)
-							// Ignore bot messages
+							msgText, threadTS := extractMessageTextAndThread(ev)
+							s.debugf("message from user=%s channel=%s subtype=%q thread=%q text=%q", ev.User, ev.Channel, ev.SubType, threadTS, msgText)
 							if ev.BotID != "" {
-								log.Println("Slack bot: ignoring bot message")
+								s.debugf("ignoring bot message")
 								continue
 							}
-							threadTS := pickThreadTS(ev.ThreadTimeStamp, ev.TimeStamp)
-							s.handleMessage(ctx, ev.Channel, ev.User, ev.Text, threadTS)
+							if threadTS == "" || threadTS == ev.TimeStamp {
+								// Avoid replying to every top-level channel message.
+								s.debugf("ignoring non-thread message without mention")
+								continue
+							}
+							if !s.isTrackedThread(ev.Channel, threadTS) {
+								s.debugf("thread not tracked yet (channel=%s thread=%s)", ev.Channel, threadTS)
+								continue
+							}
+							s.handleMessage(ctx, ev.Channel, ev.User, msgText, threadTS)
 						case *slackevents.AppMentionEvent:
-							log.Printf("Slack bot: Mention from user %s in channel %s: %s", ev.User, ev.Channel, ev.Text)
+							s.debugf("mention from user=%s channel=%s text=%q", ev.User, ev.Channel, ev.Text)
 							threadTS := pickThreadTS(ev.ThreadTimeStamp, ev.TimeStamp)
+							s.trackThread(ev.Channel, threadTS)
 							s.handleMessage(ctx, ev.Channel, ev.User, ev.Text, threadTS)
 						default:
-							log.Printf("Slack bot: unhandled inner event type: %T", ev)
+							s.debugf("unhandled inner event type: %T", ev)
 						}
 					}
 				case socketmode.EventTypeConnected:
@@ -98,7 +119,7 @@ func (s *SlackBot) Run(ctx context.Context) {
 }
 
 func (s *SlackBot) handleMessage(ctx context.Context, channelID, userID, text, threadTS string) {
-	log.Printf("Slack message from %s: %s", userID, text)
+	s.debugf("handle message from user=%s channel=%s thread=%s", userID, channelID, threadTS)
 
 	// Clean up mentions from the text if it's an app_mention
 	// e.g. "<@U12345> what is this?" -> "what is this?"
@@ -146,6 +167,29 @@ func pickThreadTS(threadTS, eventTS string) string {
 	return eventTS
 }
 
+func extractMessageTextAndThread(ev *slackevents.MessageEvent) (text string, threadTS string) {
+	text = ev.Text
+	threadTS = pickThreadTS(ev.ThreadTimeStamp, ev.TimeStamp)
+
+	if ev.Message != nil {
+		if strings.TrimSpace(text) == "" {
+			text = ev.Message.Text
+		}
+		if strings.TrimSpace(ev.Message.ThreadTimestamp) != "" {
+			threadTS = ev.Message.ThreadTimestamp
+		}
+		if strings.TrimSpace(ev.Message.Timestamp) != "" && strings.TrimSpace(threadTS) == "" {
+			threadTS = ev.Message.Timestamp
+		}
+	}
+
+	if ev.Root != nil && strings.TrimSpace(threadTS) == "" {
+		threadTS = ev.Root.Timestamp
+	}
+
+	return strings.TrimSpace(text), strings.TrimSpace(threadTS)
+}
+
 func (s *SlackBot) postReply(channelID, threadTS, text string) (string, string, error) {
 	if strings.TrimSpace(threadTS) == "" {
 		return s.api.PostMessage(channelID, slack.MsgOptionText(text, false))
@@ -154,6 +198,28 @@ func (s *SlackBot) postReply(channelID, threadTS, text string) (string, string, 
 		slack.MsgOptionText(text, false),
 		slack.MsgOptionTS(threadTS),
 	)
+}
+
+func (s *SlackBot) trackThread(channelID, threadTS string) {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(threadTS) == "" {
+		return
+	}
+	key := channelID + ":" + threadTS
+	s.mu.Lock()
+	s.threads[key] = true
+	s.mu.Unlock()
+	s.debugf("tracking thread key=%s", key)
+}
+
+func (s *SlackBot) isTrackedThread(channelID, threadTS string) bool {
+	if strings.TrimSpace(channelID) == "" || strings.TrimSpace(threadTS) == "" {
+		return false
+	}
+	key := channelID + ":" + threadTS
+	s.mu.RLock()
+	ok := s.threads[key]
+	s.mu.RUnlock()
+	return ok
 }
 
 func markdownToSlack(s string) string {
