@@ -44,7 +44,7 @@ require SUBNET_OCID
 command -v oci >/dev/null || { echo "error: oci CLI not found. https://docs.oracle.com/iaas/Content/API/SDKDocs/cliinstall.htm" >&2; exit 1; }
 command -v jq  >/dev/null || { echo "error: jq is required" >&2; exit 1; }
 
-SSH_PUBLIC_KEY_PATH="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_ed25519.pub}"
+SSH_PUBLIC_KEY_PATH="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
 [ -f "$SSH_PUBLIC_KEY_PATH" ] || { echo "error: SSH public key not found at $SSH_PUBLIC_KEY_PATH" >&2; exit 1; }
 
 INSTANCE_NAME="${INSTANCE_NAME:-repo-chat-bot}"

@@ -85,6 +85,47 @@ to change the cadence or disable it.
 - **`.env` not picked up.** `docker compose up -d` re-reads `.env` only on
   recreate. Use `docker compose up -d --force-recreate` after edits.
 
+## Continuous deploy from GitHub
+
+The workflow at `.github/workflows/deploy-oracle-cloud.yml` SSHes into the VM
+and runs `docker compose pull && up -d` against the image published by
+`.github/workflows/docker-publish.yml`.
+
+Triggers:
+
+- **Auto** — on successful completion of "Publish Docker image" on `main`. The
+  exact commit SHA is deployed (tag `sha-<short>`).
+- **Manual** — `workflow_dispatch` with an `image_tag` input (defaults to
+  `latest`). Use this to roll back: pass a previous `sha-<short>` or `v<x.y.z>`.
+
+### Required secrets (Settings → Secrets and variables → Actions)
+
+| Secret | Value |
+|--------|-------|
+| `OCI_HOST` | VM public IP (or DNS) |
+| `OCI_USER` | `opc` (Oracle Linux) or `ubuntu` |
+| `OCI_SSH_PRIVATE_KEY` | Private key matching the public key uploaded to the instance. Include the `-----BEGIN/END-----` lines. |
+| `OCI_SSH_KNOWN_HOSTS` | *Optional but recommended.* Output of `ssh-keyscan -H <host>` run from a trusted machine. If unset, the workflow falls back to TOFU and prints a warning. |
+| `GHCR_PULL_TOKEN` | *Optional.* PAT with `read:packages` scope. Only needed if the GHCR package is private. |
+
+### Environment
+
+The workflow targets a `production` GitHub Environment. Create it under
+Settings → Environments to opt into approval gates, deployment branches, or
+environment-scoped secrets. Without it, the workflow still runs — `environment:`
+just becomes a label.
+
+### What the deploy does on the VM
+
+1. `docker login ghcr.io` (only if `GHCR_PULL_TOKEN` is set).
+2. Writes `/opt/repo-chat-bot/compose.ghcr.yml` pinning `image: ghcr.io/<repo>:<tag>` with `pull_policy: always`.
+3. `docker compose -f compose.yml -f compose.ghcr.yml pull bot`
+4. `docker compose -f compose.yml -f compose.ghcr.yml up -d --remove-orphans bot`
+5. Tails the last 40 log lines for confirmation.
+
+The VM's `compose.yml` (with `build: ./src`) still works for local-built
+deploys; the override file only takes effect when both files are passed.
+
 ## Teardown
 
 ```bash

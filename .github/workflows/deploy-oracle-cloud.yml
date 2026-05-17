@@ -1,0 +1,109 @@
+name: Deploy to Oracle Cloud
+
+on:
+  workflow_run:
+    workflows: ["Publish Docker image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. latest, sha-abc1234, v1.2.3)'
+        required: false
+        default: 'latest'
+
+concurrency:
+  group: deploy-oracle-cloud
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Run on manual dispatch, or after a successful publish on main.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}
+
+    steps:
+      - name: Resolve image reference
+        id: image
+        env:
+          REPO: ${{ github.repository }}
+          DISPATCH_TAG: ${{ inputs.image_tag }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-latest}"
+          else
+            # Matches the publish workflow's `type=sha,prefix=sha-,format=short`
+            TAG="sha-$(printf '%s' "$RUN_SHA" | cut -c1-7)"
+          fi
+          REPO_LC=$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${REPO_LC}:${TAG}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Deploying: $IMAGE"
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.OCI_SSH_KNOWN_HOSTS }}
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "${KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::OCI_SSH_KNOWN_HOSTS not set; falling back to TOFU via ssh-keyscan"
+            ssh-keyscan -H "$OCI_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        env:
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes "${OCI_USER}@${OCI_HOST}" \
+            env IMAGE="$IMAGE" GHCR_USER="$GHCR_USER" GHCR_TOKEN="$GHCR_TOKEN" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /opt/repo-chat-bot
+
+          # Login only if a pull token was provided (needed for private packages).
+          if [ -n "${GHCR_TOKEN:-}" ]; then
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          fi
+
+          # Override that pins the image and forces a re-pull on every up.
+          cat > compose.ghcr.yml <<EOF
+          services:
+            bot:
+              image: $IMAGE
+              pull_policy: always
+          EOF
+
+          docker compose -f compose.yml -f compose.ghcr.yml pull bot
+          docker compose -f compose.yml -f compose.ghcr.yml up -d --remove-orphans bot
+          docker compose -f compose.yml -f compose.ghcr.yml ps
+          docker compose -f compose.yml -f compose.ghcr.yml logs --tail=40 bot
+          REMOTE
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy result: ${{ job.status }}"
+            echo ""
+            echo "- Image: \`${{ steps.image.outputs.image }}\`"
+            echo "- Trigger: \`${{ github.event_name }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
