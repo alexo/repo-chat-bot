@@ -1,0 +1,63 @@
+#cloud-config
+# Cloud-init for repo-chat-bot on Oracle Linux 8 (aarch64).
+# Rendered by provision.sh, which substitutes the COMPOSE_YML, BOT_REPO_URL,
+# and KB_REPO_URL placeholders below.
+
+write_files:
+  - path: /opt/repo-chat-bot/compose.yml
+    permissions: '0644'
+    owner: opc:opc
+    content: |
+{{COMPOSE_YML}}
+
+  - path: /opt/repo-chat-bot/.env
+    permissions: '0600'
+    owner: opc:opc
+    content: |
+      # Fill these in, then run: cd /opt/repo-chat-bot && docker compose up -d --build
+      TELEGRAM_BOT_TOKEN=
+      ALLOWED_USER_IDS=
+      LLM_PROVIDER=openrouter
+      LLM_API_KEY=
+      LLM_MODEL=openai/gpt-4o-mini
+      REPO_PATH=/app/repo
+      SLACK_APP_TOKEN=
+      SLACK_BOT_TOKEN=
+      SLACK_DEBUG=false
+
+  - path: /etc/cron.d/repo-chat-bot-kb-refresh
+    permissions: '0644'
+    content: |
+      # Refresh the knowledge base every 6 hours and restart the bot.
+      0 */6 * * * opc cd /opt/repo-chat-bot/repo && git pull --ff-only && /usr/bin/docker compose -f /opt/repo-chat-bot/compose.yml restart bot
+
+runcmd:
+  # Docker CE (docker-compose-plugin is shipped in the same repo, has aarch64 builds).
+  - dnf install -y dnf-utils git
+  - dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+  - dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker opc
+
+  # Layout. /opt/repo-chat-bot/{src,repo} match the compose mounts.
+  - mkdir -p /opt/repo-chat-bot/src /opt/repo-chat-bot/repo
+  - chown -R opc:opc /opt/repo-chat-bot
+
+  # Clone the bot source (built by compose) if a URL was provided.
+  - bash -c 'if [ -n "{{BOT_REPO_URL}}" ]; then sudo -u opc git clone "{{BOT_REPO_URL}}" /opt/repo-chat-bot/src; fi'
+
+  # Clone the knowledge base if a URL was provided.
+  - bash -c 'if [ -n "{{KB_REPO_URL}}" ]; then sudo -u opc git clone "{{KB_REPO_URL}}" /opt/repo-chat-bot/repo; fi'
+
+  # Oracle Linux ships an iptables FORWARD REJECT that can block Docker's bridge.
+  # Docker normally inserts its own rules above it, but restart to be safe.
+  - systemctl restart docker
+
+final_message: |
+  repo-chat-bot host is ready.
+  Next steps:
+    1. SSH in: ssh opc@<this-instance-public-ip>
+    2. Edit /opt/repo-chat-bot/.env (fill tokens, keys, ALLOWED_USER_IDS).
+    3. If you skipped BOT_REPO_URL, clone the source into /opt/repo-chat-bot/src now.
+    4. cd /opt/repo-chat-bot && docker compose up -d --build
+    5. docker compose logs -f bot

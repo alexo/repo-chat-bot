@@ -1,0 +1,14 @@
+services:
+  bot:
+    build:
+      context: ./src
+    container_name: repo-chat-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./repo:/app/repo:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
