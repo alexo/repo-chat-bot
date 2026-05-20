@@ -2,11 +2,19 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os/signal"
 	"sync"
 	"syscall"
 
+	"github.com/alexo/repo-chat-bot/ai"
+	"github.com/alexo/repo-chat-bot/ai/anthropic"
+	"github.com/alexo/repo-chat-bot/ai/openai"
+	"github.com/alexo/repo-chat-bot/kbsync"
+	"github.com/alexo/repo-chat-bot/kbsync/provider"
+	"github.com/alexo/repo-chat-bot/kbsync/provider/oci"
+	"github.com/alexo/repo-chat-bot/kbsync/provider/s3"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/joho/godotenv"
@@ -14,12 +22,12 @@ import (
 
 type chatState struct {
 	mu      sync.Mutex
-	history []Turn
+	history []ai.Turn
 }
 
 type app struct {
 	cfg   *Config
-	llm   LLMProvider
+	llm   ai.Provider
 	chats sync.Map // chatID -> *chatState
 }
 
@@ -33,6 +41,24 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.KBStorageProvider != "" {
+		syncer, err := buildSyncer(ctx, cfg)
+		if err != nil {
+			log.Fatalf("kbsync: %v", err)
+		}
+		if cfg.KBSyncOnStart {
+			log.Printf("kbsync: initial sync from %s (this may take a moment)", cfg.KBStorageProvider)
+			if err := syncer.SyncNow(ctx); err != nil {
+				log.Fatalf("kbsync: initial sync: %v", err)
+			}
+		}
+		go syncer.Start(ctx)
+		log.Printf("kbsync: background sync every %s (delete=%t)", cfg.KBSyncInterval, cfg.KBSyncDelete)
+	}
+
 	repo, err := NewRepo(cfg.RepoPath)
 	if err != nil {
 		log.Fatalf("repo: %v", err)
@@ -41,16 +67,16 @@ func main() {
 	log.Printf("SUCCESS: Repo root resolved to: %s", repo.Root())
 	log.Printf("SUCCESS: LLM provider: %s", cfg.LLMProvider)
 	log.Printf("SUCCESS: LLM model: %s", cfg.LLMModel)
+	if cfg.LLMDebug {
+		log.Printf("SUCCESS: LLM debug mode enabled")
+	}
 
-	llm, err := NewProvider(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, repo)
+	llm, err := newLLM(cfg, repo)
 	if err != nil {
 		log.Fatalf("provider: %v", err)
 	}
 
 	a := &app{cfg: cfg, llm: llm}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
 	if err != nil {
@@ -73,6 +99,41 @@ func main() {
 	log.Println("repo-chat-bot is running (press Ctrl+C to exit)")
 	<-ctx.Done()
 	log.Println("shutting down...")
+}
+
+func newLLM(cfg *Config, kb ai.KnowledgeBase) (ai.Provider, error) {
+	switch cfg.LLMProvider {
+	case "anthropic", "":
+		return anthropic.New(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+	case "github":
+		return openai.NewGitHubProvider(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+	case "openrouter":
+		return openai.NewOpenRouterProvider(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+	default:
+		return nil, fmt.Errorf("unknown LLM provider %q", cfg.LLMProvider)
+	}
+}
+
+func buildSyncer(ctx context.Context, cfg *Config) (*kbsync.Syncer, error) {
+	var backend provider.Provider
+	var err error
+	switch cfg.KBStorageProvider {
+	case "s3":
+		backend, err = s3.NewProvider(ctx, s3.ConfigFromEnv())
+	case "oci":
+		backend, err = oci.NewProvider(ctx, oci.ConfigFromEnv())
+	default:
+		return nil, fmt.Errorf("unknown provider %q", cfg.KBStorageProvider)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return kbsync.NewSyncer(kbsync.Options{
+		BaseDir:  cfg.KBSyncBaseDir,
+		Provider: backend,
+		Interval: cfg.KBSyncInterval,
+		Delete:   cfg.KBSyncDelete,
+	}), nil
 }
 
 func (a *app) handleMessage(ctx context.Context, b *bot.Bot, update *models.Update) {

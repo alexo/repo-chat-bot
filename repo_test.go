@@ -42,6 +42,40 @@ func TestNewRepo(t *testing.T) {
 	})
 }
 
+func TestRepoListFilesThroughSymlink(t *testing.T) {
+	// kbsync points REPO_PATH at a symlink; ListFiles must descend through it.
+	base := t.TempDir()
+	target := filepath.Join(base, "kb.001")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "a.md"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "sub", "b.md"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	link := filepath.Join(base, "current")
+	if err := os.Symlink("kb.001", link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	r, err := NewRepo(link)
+	if err != nil {
+		t.Fatalf("NewRepo via symlink: %v", err)
+	}
+	files, err := r.ListFiles()
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		got[filepath.ToSlash(f)] = true
+	}
+	if !got["a.md"] || !got["sub/b.md"] {
+		t.Errorf("ListFiles missed files via symlink, got %v", files)
+	}
+}
+
 func TestRepoResolve(t *testing.T) {
 	tmp := t.TempDir()
 	r, err := NewRepo(tmp)

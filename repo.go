@@ -54,19 +54,26 @@ func (r *Repo) ReadFile(rel string) (string, error) {
 }
 
 func (r *Repo) ListFiles() ([]string, error) {
+	// Resolve symlinks per-call so a kbsync-managed `current` symlink swap is
+	// picked up — WalkDir's Lstat at root would otherwise treat the symlink as
+	// a non-directory and never descend.
+	walkRoot, err := filepath.EvalSymlinks(r.root)
+	if err != nil {
+		walkRoot = r.root
+	}
 	var files []string
-	err := filepath.WalkDir(r.root, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(walkRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "node_modules" || strings.HasPrefix(name, ".") && path != r.root {
+			if name == ".git" || name == "node_modules" || strings.HasPrefix(name, ".") && path != walkRoot {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(r.root, path)
+		rel, err := filepath.Rel(walkRoot, path)
 		if err != nil {
 			return err
 		}

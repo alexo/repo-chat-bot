@@ -1,4 +1,5 @@
-package main
+// Package anthropic implements ai.Provider against the Anthropic Messages API.
+package anthropic
 
 import (
 	"bytes"
@@ -8,26 +9,19 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/alexo/repo-chat-bot/ai"
 )
 
 const (
-	anthropicURL     = "https://api.anthropic.com/v1/messages"
-	anthropicVersion = "2023-06-01"
-	maxToolRounds    = 8
-	maxTokens        = 4096
+	endpoint = "https://api.anthropic.com/v1/messages"
+	version  = "2023-06-01"
 )
 
-const systemPrompt = `You are an assistant that answers questions using the contents of a git repository as your knowledge base.
-
-Use the tools to discover what's in the repo (list_files), read specific files (read_file), or search across files (grep). Ground every claim in the actual file contents — quote or cite paths when it helps. If a question can't be answered from the repo, say so plainly rather than inventing.
-
-Keep answers concise and chat-friendly — this is a Telegram conversation, not a report.`
-
-// anthropicToolSchemas advertises the bot's tools in Anthropic's tool format.
-// Other adapters define their tools in whatever shape their provider expects.
-var anthropicToolSchemas = []map[string]any{
+// toolSchemas advertises the bot's tools in Anthropic's native shape.
+var toolSchemas = []map[string]any{
 	{
-		"name":        "list_files",
+		"name":        ai.ToolListFiles,
 		"description": "List every file in the repository, relative to the repo root.",
 		"input_schema": map[string]any{
 			"type":       "object",
@@ -35,7 +29,7 @@ var anthropicToolSchemas = []map[string]any{
 		},
 	},
 	{
-		"name":        "read_file",
+		"name":        ai.ToolReadFile,
 		"description": "Read the full text contents of a file in the repository.",
 		"input_schema": map[string]any{
 			"type": "object",
@@ -49,7 +43,7 @@ var anthropicToolSchemas = []map[string]any{
 		},
 	},
 	{
-		"name":        "grep",
+		"name":        ai.ToolGrep,
 		"description": "Case-insensitive substring search across all repo files. Returns matching lines with file:line prefixes.",
 		"input_schema": map[string]any{
 			"type": "object",
@@ -98,32 +92,32 @@ type apiResponse struct {
 	} `json:"error,omitempty"`
 }
 
-type AnthropicProvider struct {
+type Provider struct {
 	apiKey string
 	model  string
-	repo   *Repo
+	kb     ai.KnowledgeBase
 	http   *http.Client
 }
 
-func NewAnthropicProvider(apiKey, model string, repo *Repo) *AnthropicProvider {
-	return &AnthropicProvider{
+func New(apiKey, model string, kb ai.KnowledgeBase) *Provider {
+	return &Provider{
 		apiKey: apiKey,
 		model:  model,
-		repo:   repo,
+		kb:     kb,
 		http:   &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
 // Ask runs a full tool-use loop and returns the final text reply along with
 // the conversation history extended by the user turn and assistant reply.
-func (p *AnthropicProvider) Ask(ctx context.Context, history []Turn, userText string) (string, []Turn, error) {
+func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) (string, []ai.Turn, error) {
 	messages := turnsToMessages(history)
 	messages = append(messages, message{
 		Role:    "user",
 		Content: []contentBlock{{Type: "text", Text: userText}},
 	})
 
-	for round := 0; round < maxToolRounds; round++ {
+	for round := 0; round < ai.MaxToolRounds; round++ {
 		resp, err := p.call(ctx, messages)
 		if err != nil {
 			return "", nil, err
@@ -134,8 +128,8 @@ func (p *AnthropicProvider) Ask(ctx context.Context, history []Turn, userText st
 		if resp.StopReason != "tool_use" {
 			reply := collectText(resp.Content)
 			newHistory := append(history,
-				Turn{Role: "user", Text: userText},
-				Turn{Role: "assistant", Text: reply},
+				ai.Turn{Role: "user", Text: userText},
+				ai.Turn{Role: "assistant", Text: reply},
 			)
 			return reply, newHistory, nil
 		}
@@ -145,7 +139,7 @@ func (p *AnthropicProvider) Ask(ctx context.Context, history []Turn, userText st
 			if block.Type != "tool_use" {
 				continue
 			}
-			result := dispatch(p.repo, block.Name, block.Input)
+			result := ai.Dispatch(p.kb, block.Name, block.Input)
 			toolResults = append(toolResults, contentBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -155,10 +149,10 @@ func (p *AnthropicProvider) Ask(ctx context.Context, history []Turn, userText st
 		messages = append(messages, message{Role: "user", Content: toolResults})
 	}
 
-	return "", nil, fmt.Errorf("exceeded %d tool rounds without final answer", maxToolRounds)
+	return "", nil, fmt.Errorf("exceeded %d tool rounds without final answer", ai.MaxToolRounds)
 }
 
-func turnsToMessages(history []Turn) []message {
+func turnsToMessages(history []ai.Turn) []message {
 	out := make([]message, 0, len(history))
 	for _, t := range history {
 		out = append(out, message{
@@ -169,25 +163,25 @@ func turnsToMessages(history []Turn) []message {
 	return out
 }
 
-func (p *AnthropicProvider) call(ctx context.Context, messages []message) (*apiResponse, error) {
+func (p *Provider) call(ctx context.Context, messages []message) (*apiResponse, error) {
 	body, err := json.Marshal(apiRequest{
 		Model:     p.model,
-		MaxTokens: maxTokens,
-		System:    systemPrompt,
-		Tools:     anthropicToolSchemas,
+		MaxTokens: ai.MaxTokens,
+		System:    ai.SystemPrompt,
+		Tools:     toolSchemas,
 		Messages:  messages,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.apiKey)
-	req.Header.Set("anthropic-version", anthropicVersion)
+	req.Header.Set("anthropic-version", version)
 
 	resp, err := p.http.Do(req)
 	if err != nil {

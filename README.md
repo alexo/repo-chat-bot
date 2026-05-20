@@ -82,10 +82,25 @@ Capped at 8 tool rounds per question — enough for "list the repo, read the rel
 
 The system prompt in `claude.go` is generic ("answer questions using the contents of a git repository"). If you're pointing this at a specific kind of repo (codebase, docs site, personal notes), customize the prompt — telling Claude *what kind of repo this is* and *which files matter most* dramatically improves answers and reduces wasted tool calls.
 
+## Knowledge-base sync from object storage
+
+If you'd rather not keep the KB on disk (or git-clone it), the bot can pull it
+from S3 or OCI Object Storage on a polling interval. Set `KB_STORAGE_PROVIDER`
+to `s3` or `oci` and configure the rest of the `KB_*` vars in `.env.example`.
+
+The sync writes each pull into a fresh `<KB_SYNC_BASE_DIR>/kb.<timestamp>/`
+directory, builds a manifest of ETags, and atomically flips the
+`<KB_SYNC_BASE_DIR>/current` symlink — readers never see a half-written tree.
+Unchanged files are hard-linked from the previous snapshot, so only changed
+objects hit the network. Two snapshots are retained for safe in-flight reads.
+
+S3 credentials use the standard AWS chain (env vars / `~/.aws/credentials` /
+IAM role). OCI uses `~/.oci/config` by default, or set `KB_OCI_AUTH=instance`
+to use instance principal on an OCI compute VM.
+
 ## Hardening for production
 
 - Swap in-memory `sync.Map` history for Redis (Upstash, Railway Redis). Persist last ~20 turns per chat.
-- Add a `git pull` tool (or a periodic background fetch) so commits flow in without a redeploy.
 - Strip Claude's Markdown to Telegram-compatible MarkdownV2 before sending, then set `parse_mode`.
 - Add structured logging (`slog`) and a `/health` HTTP endpoint if your platform wants one.
 - Rate-limit per chat to cap accidental API spend.

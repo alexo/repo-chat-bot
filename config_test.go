@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // setEnv sets the relevant env vars for LoadConfig, clearing any that aren't
@@ -16,6 +17,11 @@ func setEnv(t *testing.T, m map[string]string) {
 		"LLM_MODEL",
 		"REPO_PATH",
 		"ALLOWED_USER_IDS",
+		"KB_STORAGE_PROVIDER",
+		"KB_SYNC_BASE_DIR",
+		"KB_SYNC_INTERVAL",
+		"KB_SYNC_DELETE",
+		"KB_SYNC_ON_START",
 	}
 	for _, k := range keys {
 		t.Setenv(k, m[k])
@@ -98,6 +104,121 @@ func TestLoadConfig_Success(t *testing.T) {
 			if !cfg.AllowedUserIDs[id] {
 				t.Errorf("user %d not allowed", id)
 			}
+		}
+	})
+}
+
+func TestLoadConfig_KBSync(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN": "tok",
+			"LLM_API_KEY":        "key",
+			"REPO_PATH":          "/tmp/repo",
+			"ALLOWED_USER_IDS":   "42",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.KBStorageProvider != "" {
+			t.Errorf("expected sync disabled, got provider=%q", cfg.KBStorageProvider)
+		}
+	})
+
+	t.Run("s3 provider with defaults", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"LLM_API_KEY":         "key",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "s3",
+			"KB_SYNC_BASE_DIR":    "/tmp/kb",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.KBStorageProvider != "s3" {
+			t.Errorf("provider: got %q, want s3", cfg.KBStorageProvider)
+		}
+		if cfg.KBSyncInterval != time.Hour {
+			t.Errorf("interval default: got %v, want 1h", cfg.KBSyncInterval)
+		}
+		if !cfg.KBSyncDelete {
+			t.Errorf("delete default: got false, want true")
+		}
+		if !cfg.KBSyncOnStart {
+			t.Errorf("on-start default: got false, want true")
+		}
+		if cfg.RepoPath != "/tmp/kb/current" {
+			t.Errorf("repo path derived: got %q, want /tmp/kb/current", cfg.RepoPath)
+		}
+	})
+
+	t.Run("explicit overrides honored", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"LLM_API_KEY":         "key",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "oci",
+			"KB_SYNC_BASE_DIR":    "/tmp/kb",
+			"KB_SYNC_INTERVAL":    "15m",
+			"KB_SYNC_DELETE":      "false",
+			"KB_SYNC_ON_START":    "false",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.KBSyncInterval != 15*time.Minute {
+			t.Errorf("interval: got %v, want 15m", cfg.KBSyncInterval)
+		}
+		if cfg.KBSyncDelete {
+			t.Errorf("delete: got true, want false")
+		}
+		if cfg.KBSyncOnStart {
+			t.Errorf("on-start: got true, want false")
+		}
+	})
+
+	t.Run("invalid provider rejected", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"LLM_API_KEY":         "key",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "gcs",
+			"KB_SYNC_BASE_DIR":    "/tmp/kb",
+		})
+		_, err := LoadConfig()
+		if err == nil || !strings.Contains(err.Error(), "KB_STORAGE_PROVIDER") {
+			t.Fatalf("expected provider validation error, got %v", err)
+		}
+	})
+
+	t.Run("base dir required when provider set", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"LLM_API_KEY":         "key",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "s3",
+		})
+		_, err := LoadConfig()
+		if err == nil || !strings.Contains(err.Error(), "KB_SYNC_BASE_DIR") {
+			t.Fatalf("expected base dir error, got %v", err)
+		}
+	})
+
+	t.Run("invalid interval rejected", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"LLM_API_KEY":         "key",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "s3",
+			"KB_SYNC_BASE_DIR":    "/tmp/kb",
+			"KB_SYNC_INTERVAL":    "garbage",
+		})
+		_, err := LoadConfig()
+		if err == nil || !strings.Contains(err.Error(), "KB_SYNC_INTERVAL") {
+			t.Fatalf("expected interval error, got %v", err)
 		}
 	})
 }

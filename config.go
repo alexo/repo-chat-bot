@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -13,30 +15,46 @@ type Config struct {
 	SlackAppToken    string
 	SlackBotToken    string
 	SlackDebug       bool
+	LLMDebug         bool
 	LLMProvider      string
 	LLMAPIKey        string
 	LLMModel         string
 	RepoPath         string
 	AllowedUserIDs   map[int64]bool
+
+	// KB sync (object storage → local mirror). All optional; sync is enabled
+	// only when KBStorageProvider != "". When enabled, RepoPath is derived as
+	// <KBSyncBaseDir>/current so consumers don't have to know about the symlink.
+	KBStorageProvider string        // "s3" or "oci"
+	KBSyncBaseDir     string        // where snapshots + `current` symlink live
+	KBSyncInterval    time.Duration // poll cadence
+	KBSyncDelete      bool          // mirror mode: delete locally what's gone remotely
+	KBSyncOnStart     bool          // block boot on first successful sync
 }
 
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
-		SlackAppToken:    os.Getenv("SLACK_APP_TOKEN"),
-		SlackBotToken:    os.Getenv("SLACK_BOT_TOKEN"),
-		SlackDebug:       parseBoolEnv("SLACK_DEBUG"),
-		LLMProvider:      os.Getenv("LLM_PROVIDER"),
-		LLMAPIKey:        os.Getenv("LLM_API_KEY"),
-		LLMModel:         os.Getenv("LLM_MODEL"),
-		RepoPath:         os.Getenv("REPO_PATH"),
-		AllowedUserIDs:   map[int64]bool{},
+		TelegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		SlackAppToken:     os.Getenv("SLACK_APP_TOKEN"),
+		SlackBotToken:     os.Getenv("SLACK_BOT_TOKEN"),
+		SlackDebug:        parseBoolEnv("SLACK_DEBUG"),
+		LLMDebug:          parseBoolEnv("LLM_DEBUG"),
+		LLMProvider:       os.Getenv("LLM_PROVIDER"),
+		LLMAPIKey:         os.Getenv("LLM_API_KEY"),
+		LLMModel:          os.Getenv("LLM_MODEL"),
+		RepoPath:          os.Getenv("REPO_PATH"),
+		AllowedUserIDs:    map[int64]bool{},
+		KBStorageProvider: strings.ToLower(strings.TrimSpace(os.Getenv("KB_STORAGE_PROVIDER"))),
+		KBSyncBaseDir:     os.Getenv("KB_SYNC_BASE_DIR"),
 	}
 	if cfg.TelegramBotToken == "" {
 		return nil, errors.New("TELEGRAM_BOT_TOKEN is required")
 	}
 	if cfg.LLMAPIKey == "" {
 		return nil, errors.New("LLM_API_KEY is required")
+	}
+	if err := loadKBSyncConfig(cfg); err != nil {
+		return nil, err
 	}
 	if cfg.RepoPath == "" {
 		return nil, errors.New("REPO_PATH is required")
@@ -62,6 +80,40 @@ func LoadConfig() (*Config, error) {
 		return nil, errors.New("ALLOWED_USER_IDS must list at least one Telegram user ID")
 	}
 	return cfg, nil
+}
+
+func loadKBSyncConfig(cfg *Config) error {
+	if cfg.KBStorageProvider == "" {
+		return nil
+	}
+	switch cfg.KBStorageProvider {
+	case "s3", "oci":
+	default:
+		return fmt.Errorf("KB_STORAGE_PROVIDER must be \"s3\" or \"oci\", got %q", cfg.KBStorageProvider)
+	}
+	if cfg.KBSyncBaseDir == "" {
+		return errors.New("KB_SYNC_BASE_DIR is required when KB_STORAGE_PROVIDER is set")
+	}
+	cfg.KBSyncInterval = time.Hour
+	if v := strings.TrimSpace(os.Getenv("KB_SYNC_INTERVAL")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid KB_SYNC_INTERVAL %q: %w", v, err)
+		}
+		cfg.KBSyncInterval = d
+	}
+	cfg.KBSyncDelete = true
+	if v := strings.TrimSpace(os.Getenv("KB_SYNC_DELETE")); v != "" {
+		cfg.KBSyncDelete = parseBoolEnv("KB_SYNC_DELETE")
+	}
+	cfg.KBSyncOnStart = true
+	if v := strings.TrimSpace(os.Getenv("KB_SYNC_ON_START")); v != "" {
+		cfg.KBSyncOnStart = parseBoolEnv("KB_SYNC_ON_START")
+	}
+	if cfg.RepoPath == "" {
+		cfg.RepoPath = filepath.Join(cfg.KBSyncBaseDir, "current")
+	}
+	return nil
 }
 
 func parseBoolEnv(name string) bool {
