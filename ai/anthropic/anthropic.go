@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -95,22 +96,31 @@ type apiResponse struct {
 type Provider struct {
 	apiKey string
 	model  string
+	debug  bool
 	kb     ai.KnowledgeBase
 	http   *http.Client
 }
 
-func New(apiKey, model string, kb ai.KnowledgeBase) *Provider {
+func New(apiKey, model string, debug bool, kb ai.KnowledgeBase) *Provider {
 	return &Provider{
 		apiKey: apiKey,
 		model:  model,
+		debug:  debug,
 		kb:     kb,
 		http:   &http.Client{Timeout: 120 * time.Second},
+	}
+}
+
+func (p *Provider) debugf(format string, args ...any) {
+	if p.debug {
+		log.Printf("llm[anthropic]: "+format, args...)
 	}
 }
 
 // Ask runs a full tool-use loop and returns the final text reply along with
 // the conversation history extended by the user turn and assistant reply.
 func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) (string, []ai.Turn, error) {
+	p.debugf("ask start: history=%d user_text_len=%d model=%s", len(history), len(userText), p.model)
 	messages := turnsToMessages(history)
 	messages = append(messages, message{
 		Role:    "user",
@@ -118,15 +128,18 @@ func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) 
 	})
 
 	for round := 0; round < ai.MaxToolRounds; round++ {
+		p.debugf("round=%d send messages=%d", round+1, len(messages))
 		resp, err := p.call(ctx, messages)
 		if err != nil {
 			return "", nil, err
 		}
 
 		messages = append(messages, message{Role: "assistant", Content: resp.Content})
+		p.debugf("round=%d stop_reason=%s content_blocks=%d", round+1, resp.StopReason, len(resp.Content))
 
 		if resp.StopReason != "tool_use" {
 			reply := collectText(resp.Content)
+			p.debugf("ask complete: reply_len=%d", len(reply))
 			newHistory := append(history,
 				ai.Turn{Role: "user", Text: userText},
 				ai.Turn{Role: "assistant", Text: reply},
@@ -139,7 +152,9 @@ func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) 
 			if block.Type != "tool_use" {
 				continue
 			}
+			p.debugf("tool call: name=%s id=%s", block.Name, block.ID)
 			result := ai.Dispatch(p.kb, block.Name, block.Input)
+			p.debugf("tool result: name=%s result_len=%d", block.Name, len(result))
 			toolResults = append(toolResults, contentBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -174,6 +189,7 @@ func (p *Provider) call(ctx context.Context, messages []message) (*apiResponse, 
 	if err != nil {
 		return nil, err
 	}
+	p.debugf("http request: body_bytes=%d", len(body))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -193,6 +209,7 @@ func (p *Provider) call(ctx context.Context, messages []message) (*apiResponse, 
 	if err != nil {
 		return nil, err
 	}
+	p.debugf("http response: status=%d body_bytes=%d", resp.StatusCode, len(raw))
 
 	var parsed apiResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {

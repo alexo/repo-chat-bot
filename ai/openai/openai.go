@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -109,33 +110,42 @@ type Provider struct {
 	baseURL string
 	apiKey  string
 	model   string
+	debug   bool
 	kb      ai.KnowledgeBase
 	http    *http.Client
 }
 
 // New constructs a Provider pointing at any OpenAI-compatible endpoint.
-func New(label, baseURL, apiKey, model string, kb ai.KnowledgeBase) *Provider {
+func New(label, baseURL, apiKey, model string, debug bool, kb ai.KnowledgeBase) *Provider {
 	return &Provider{
 		label:   label,
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		model:   model,
+		debug:   debug,
 		kb:      kb,
 		http:    &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
+func (p *Provider) debugf(format string, args ...any) {
+	if p.debug {
+		log.Printf("llm[%s]: "+format, append([]any{p.label}, args...)...)
+	}
+}
+
 // NewGitHubProvider targets GitHub Models with the supplied PAT.
-func NewGitHubProvider(apiKey, model string, kb ai.KnowledgeBase) *Provider {
-	return New("github", githubURL, apiKey, model, kb)
+func NewGitHubProvider(apiKey, model string, debug bool, kb ai.KnowledgeBase) *Provider {
+	return New("github", githubURL, apiKey, model, debug, kb)
 }
 
 // NewOpenRouterProvider targets OpenRouter with the supplied API key.
-func NewOpenRouterProvider(apiKey, model string, kb ai.KnowledgeBase) *Provider {
-	return New("openrouter", openRouterURL, apiKey, model, kb)
+func NewOpenRouterProvider(apiKey, model string, debug bool, kb ai.KnowledgeBase) *Provider {
+	return New("openrouter", openRouterURL, apiKey, model, debug, kb)
 }
 
 func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) (string, []ai.Turn, error) {
+	p.debugf("ask start: history=%d user_text_len=%d model=%s", len(history), len(userText), p.model)
 	messages := []message{{Role: "system", Content: ai.SystemPrompt}}
 	for _, t := range history {
 		messages = append(messages, message{Role: t.Role, Content: t.Text})
@@ -143,6 +153,7 @@ func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) 
 	messages = append(messages, message{Role: "user", Content: userText})
 
 	for round := 0; round < ai.MaxToolRounds; round++ {
+		p.debugf("round=%d send messages=%d", round+1, len(messages))
 		resp, err := p.call(ctx, messages)
 		if err != nil {
 			return "", nil, err
@@ -150,9 +161,11 @@ func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) 
 
 		choice := resp.Choices[0]
 		messages = append(messages, choice.Message)
+		p.debugf("round=%d finish_reason=%s tool_calls=%d", round+1, choice.FinishReason, len(choice.Message.ToolCalls))
 
 		if choice.FinishReason != "tool_calls" {
 			reply := choice.Message.Content
+			p.debugf("ask complete: reply_len=%d", len(reply))
 			newHistory := append(history,
 				ai.Turn{Role: "user", Text: userText},
 				ai.Turn{Role: "assistant", Text: reply},
@@ -161,7 +174,9 @@ func (p *Provider) Ask(ctx context.Context, history []ai.Turn, userText string) 
 		}
 
 		for _, tc := range choice.Message.ToolCalls {
+			p.debugf("tool call: name=%s id=%s", tc.Function.Name, tc.ID)
 			result := ai.Dispatch(p.kb, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
+			p.debugf("tool result: name=%s result_len=%d", tc.Function.Name, len(result))
 			messages = append(messages, message{
 				Role:    "tool",
 				ToolID:  tc.ID,
@@ -182,6 +197,7 @@ func (p *Provider) call(ctx context.Context, messages []message) (*response, err
 	if err != nil {
 		return nil, err
 	}
+	p.debugf("http request: body_bytes=%d", len(body))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL, bytes.NewReader(body))
 	if err != nil {
@@ -198,6 +214,7 @@ func (p *Provider) call(ctx context.Context, messages []message) (*response, err
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
+		p.debugf("http response: status=%d body_bytes=%d", resp.StatusCode, len(raw))
 		return nil, fmt.Errorf("%s http %d: %s", p.label, resp.StatusCode, string(raw))
 	}
 
@@ -205,6 +222,7 @@ func (p *Provider) call(ctx context.Context, messages []message) (*response, err
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, err
 	}
+	p.debugf("http response: status=%d choices=%d", resp.StatusCode, len(parsed.Choices))
 	if parsed.Error != nil {
 		return nil, fmt.Errorf("%s error: %s", p.label, parsed.Error.Message)
 	}

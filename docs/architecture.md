@@ -146,6 +146,82 @@ Thread behavior:
 7. Final assistant text returned to adapter.
 8. Adapter posts response and stores updated conversation history.
 
+## 3.1 LLM Interaction Flow (Detailed)
+
+Each provider adapter (`ai/anthropic`, `ai/openai`) follows the same logical pattern:
+
+1. Build the initial request context:
+   - system prompt (`ai.SystemPrompt`)
+   - prior conversation turns (`history`)
+   - current user message (`userText`)
+   - tool schema definitions (`list_files`, `read_file`, `grep`)
+2. Send request to the LLM endpoint.
+3. If the model responds with tool calls:
+   - execute each tool locally against the knowledge base
+   - append tool results as messages
+   - send another request with the expanded context
+4. Repeat until model returns final natural-language output or max rounds is reached.
+
+This is intentionally provider-neutral: Anthropic and OpenAI-compatible backends use different wire formats, but identical loop semantics.
+
+## 3.2 How Context Is Used
+
+Context is cumulative within a single `Ask(...)` call.
+
+The model sees, in order:
+
+- System instructions (behavior and grounding rules)
+- Prior persisted chat turns for that conversation
+- Current user question
+- Intermediate assistant tool-call messages
+- Tool results returned by the app
+
+Important:
+
+- The full knowledge base is **not** sent up front.
+- The model pulls data on demand via tools.
+- Only files/lines surfaced by tool calls become part of request context.
+
+## 3.3 Token Usage Impact
+
+Token usage is driven by repeated request expansion during the tool loop.
+
+Main token cost drivers:
+
+- Size of existing conversation history
+- Number of tool rounds (`ai.MaxToolRounds`)
+- Size of tool outputs (full file reads can be large)
+- Length of final response
+- Extra provider-side formatting overhead
+
+Practical implications:
+
+- More rounds -> more cumulative prompt tokens in subsequent calls.
+- Large `read_file` output can dominate cost and latency.
+- Re-asking similar questions in long chats can become progressively expensive.
+
+## 3.4 Token Optimization Strategies
+
+Current design already helps by avoiding full-repo prompt stuffing. Additional tuning options:
+
+- Keep responses concise in prompt policy.
+- Encourage targeted tool use (`grep` before broad `read_file`).
+- Trim or summarize long conversation history (or add rolling window).
+- Add file-size guards/chunked reads for very large files.
+- Limit max tool rounds for cost-sensitive environments.
+- Use cheaper/faster default models for high-volume channels.
+
+## 3.5 Observability for LLM Flow
+
+With `LLM_DEBUG=true`, providers emit optional diagnostics such as:
+
+- round number and message count
+- finish/stop reason
+- tool call names and result lengths
+- HTTP status and payload-size hints
+
+This helps correlate latency/cost with concrete tool-loop behavior.
+
 ## 4. State Model
 
 In-memory state only:
@@ -191,4 +267,3 @@ Current limits:
 - Add observability (`slog`, metrics, health endpoint).
 - Add configurable KB sync/update mechanism.
 - Introduce optional indexing/vector retrieval for very large multi-repo knowledge bases.
-
