@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["Publish Docker image"]
     types: [completed]
-    branches: [mainbackup]
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:
