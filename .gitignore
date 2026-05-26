@@ -3,3 +3,4 @@ repo-chat-bot
 *.log
 .DS_Store
 .idea
+Dockerfile.local
