@@ -12,6 +12,8 @@ func setEnv(t *testing.T, m map[string]string) {
 	t.Helper()
 	keys := []string{
 		"TELEGRAM_BOT_TOKEN",
+		"SLACK_APP_TOKEN",
+		"SLACK_BOT_TOKEN",
 		"LLM_PROVIDER",
 		"LLM_API_KEY",
 		"LLM_MODEL",
@@ -104,6 +106,46 @@ func TestLoadConfig_Success(t *testing.T) {
 			if !cfg.AllowedUserIDs[id] {
 				t.Errorf("user %d not allowed", id)
 			}
+		}
+	})
+
+	t.Run("slack only — no Telegram token, no ALLOWED_USER_IDS", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"SLACK_APP_TOKEN": "xapp-1",
+			"SLACK_BOT_TOKEN": "xoxb-1",
+			"LLM_API_KEY":     "key",
+			"REPO_PATH":       "/tmp/repo",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.TelegramBotToken != "" {
+			t.Errorf("telegram token: got %q, want empty", cfg.TelegramBotToken)
+		}
+		if cfg.SlackAppToken != "xapp-1" || cfg.SlackBotToken != "xoxb-1" {
+			t.Errorf("slack tokens not loaded: %+v", cfg)
+		}
+	})
+
+	t.Run("telegram + slack both configured", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_BOT_TOKEN": "tok",
+			"SLACK_APP_TOKEN":    "xapp-1",
+			"SLACK_BOT_TOKEN":    "xoxb-1",
+			"LLM_API_KEY":        "key",
+			"REPO_PATH":          "/tmp/repo",
+			"ALLOWED_USER_IDS":   "42",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if !cfg.AllowedUserIDs[42] {
+			t.Errorf("user 42 missing from AllowedUserIDs")
+		}
+		if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
+			t.Errorf("slack tokens not loaded: %+v", cfg)
 		}
 	})
 }
@@ -230,13 +272,30 @@ func TestLoadConfig_Errors(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name: "missing TELEGRAM_BOT_TOKEN",
+			name: "no chat platform configured",
 			env: map[string]string{
-				"LLM_API_KEY":      "key",
-				"REPO_PATH":        "/tmp/repo",
-				"ALLOWED_USER_IDS": "42",
+				"LLM_API_KEY": "key",
+				"REPO_PATH":   "/tmp/repo",
 			},
-			errSubstr: "TELEGRAM_BOT_TOKEN",
+			errSubstr: "at least one chat platform",
+		},
+		{
+			name: "slack tokens half-set (app only)",
+			env: map[string]string{
+				"SLACK_APP_TOKEN": "xapp-1",
+				"LLM_API_KEY":     "key",
+				"REPO_PATH":       "/tmp/repo",
+			},
+			errSubstr: "SLACK_APP_TOKEN and SLACK_BOT_TOKEN",
+		},
+		{
+			name: "slack tokens half-set (bot only)",
+			env: map[string]string{
+				"SLACK_BOT_TOKEN": "xoxb-1",
+				"LLM_API_KEY":     "key",
+				"REPO_PATH":       "/tmp/repo",
+			},
+			errSubstr: "SLACK_APP_TOKEN and SLACK_BOT_TOKEN",
 		},
 		{
 			name: "missing LLM_API_KEY",
@@ -257,7 +316,7 @@ func TestLoadConfig_Errors(t *testing.T) {
 			errSubstr: "REPO_PATH",
 		},
 		{
-			name: "missing ALLOWED_USER_IDS",
+			name: "telegram configured but ALLOWED_USER_IDS missing",
 			env: map[string]string{
 				"TELEGRAM_BOT_TOKEN": "tok",
 				"LLM_API_KEY":        "key",

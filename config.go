@@ -47,9 +47,17 @@ func LoadConfig() (*Config, error) {
 		KBStorageProvider: strings.ToLower(strings.TrimSpace(os.Getenv("KB_STORAGE_PROVIDER"))),
 		KBSyncBaseDir:     os.Getenv("KB_SYNC_BASE_DIR"),
 	}
-	if cfg.TelegramBotToken == "" {
-		return nil, errors.New("TELEGRAM_BOT_TOKEN is required")
+	telegramConfigured := cfg.TelegramBotToken != ""
+	slackAppSet := cfg.SlackAppToken != ""
+	slackBotSet := cfg.SlackBotToken != ""
+	if slackAppSet != slackBotSet {
+		return nil, errors.New("SLACK_APP_TOKEN and SLACK_BOT_TOKEN must both be set or both empty")
 	}
+	slackConfigured := slackAppSet && slackBotSet
+	if !telegramConfigured && !slackConfigured {
+		return nil, errors.New("at least one chat platform must be configured: set TELEGRAM_BOT_TOKEN, or both SLACK_APP_TOKEN and SLACK_BOT_TOKEN")
+	}
+
 	if cfg.LLMAPIKey == "" {
 		return nil, errors.New("LLM_API_KEY is required")
 	}
@@ -76,8 +84,8 @@ func LoadConfig() (*Config, error) {
 		}
 		cfg.AllowedUserIDs[id] = true
 	}
-	if len(cfg.AllowedUserIDs) == 0 {
-		return nil, errors.New("ALLOWED_USER_IDS must list at least one Telegram user ID")
+	if telegramConfigured && len(cfg.AllowedUserIDs) == 0 {
+		return nil, errors.New("ALLOWED_USER_IDS must list at least one Telegram user ID when TELEGRAM_BOT_TOKEN is set")
 	}
 	return cfg, nil
 }

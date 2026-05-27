@@ -79,12 +79,14 @@ func main() {
 
 	a := &app{cfg: cfg, llm: llm}
 
-	b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
-	if err != nil {
-		log.Printf("WARNING: Telegram bot failed to initialize: %v. Continuing without Telegram.", err)
-	} else {
-		log.Println("telegram bot starting")
-		go b.Start(ctx)
+	if cfg.TelegramBotToken != "" {
+		b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
+		if err != nil {
+			log.Printf("WARNING: Telegram bot failed to initialize: %v. Continuing without Telegram.", err)
+		} else {
+			log.Println("telegram bot starting")
+			go b.Start(ctx)
+		}
 	}
 
 	if cfg.SlackAppToken != "" && cfg.SlackBotToken != "" {
