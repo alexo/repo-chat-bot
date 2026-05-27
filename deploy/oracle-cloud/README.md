@@ -11,7 +11,9 @@ For the click-by-click manual path, see [docs/deploy-oracle-cloud.md](../../docs
 |------|---------|
 | `provision.sh` | Calls `oci compute instance launch` with a rendered cloud-init. |
 | `cloud-init.tmpl.yml` | First-boot config: installs Docker, lays out `/opt/repo-chat-bot`, drops `.env` stub and a 6-hour KB-refresh cron. |
-| `compose.yml` | Bot service (`build: ./src`, mounts `./repo` read-only). |
+| `compose.yml` | Bot service (`build: ./src`, mounts `./repo` read-only, pins `REPO_PATH=/app/repo`). |
+| `deploy.sh` | Canonical deploy entry point. Streams `remote-deploy.sh` to the VM over SSH. Used by both laptop and CI. |
+| `remote-deploy.sh` | Runs on the VM: writes the GHCR compose override and `docker compose pull && up -d`. Never stored on the VM — piped in via stdin on every deploy. |
 
 ## Prerequisites
 
@@ -56,12 +58,37 @@ All knobs are env vars:
 | `INSTANCE_NAME` | `repo-chat-bot` | Display name in the console. |
 | `AVAILABILITY_DOMAIN` | auto | Set explicitly if you hit capacity errors. |
 | `SSH_PUBLIC_KEY_PATH` | `~/.ssh/id_ed25519.pub` | |
+| `DEPLOY_USER` | `opc` | OS user that owns `/opt/repo-chat-bot` and runs Docker. Use `ubuntu` for an Ubuntu image. |
 
-## Updating the bot
+## Deploying / updating the bot
 
-On the VM:
+The canonical entry point is `deploy.sh`. It pulls the published image from
+GHCR and rolls the container — same script CI uses, so laptop and CI deploys
+are byte-for-byte identical.
 
 ```bash
+# From the repo root, on your laptop:
+export OCI_HOST=<vm-ip>
+export OCI_USER=ubuntu                       # default: ubuntu
+export GHCR_TOKEN=<pat-with-read:packages>   # only if package is private
+# export SSH_KEY=~/.ssh/id_ed25519           # default: ssh's own default
+# export IMAGE_NAME=ghcr.io/<owner>/<repo>   # default: derived from git remote
+
+./deploy/oracle-cloud/deploy.sh              # → :latest
+./deploy/oracle-cloud/deploy.sh sha-abc1234  # specific build
+./deploy/oracle-cloud/deploy.sh v1.0.0       # tagged release
+```
+
+`deploy.sh` SSHes into the VM and pipes `remote-deploy.sh` in over stdin —
+nothing is left behind on the VM beyond the running container and the
+`compose.ghcr.yml` override that pins the image.
+
+### Local-build fallback
+
+If you'd rather skip GHCR and build on the VM (e.g. for an ad-hoc patch):
+
+```bash
+ssh ubuntu@<vm>
 cd /opt/repo-chat-bot/src && git pull
 cd /opt/repo-chat-bot && docker compose up -d --build
 ```
@@ -87,9 +114,9 @@ to change the cadence or disable it.
 
 ## Continuous deploy from GitHub
 
-The workflow at `.github/workflows/deploy-oracle-cloud.yml` SSHes into the VM
-and runs `docker compose pull && up -d` against the image published by
-`.github/workflows/docker-publish.yml`.
+The workflow at `.github/workflows/deploy-oracle-cloud.yml` resolves the image
+tag from the trigger, configures SSH from secrets, and invokes the same
+`deploy.sh` you'd run locally. There's no separate deploy logic in the workflow.
 
 Triggers:
 
@@ -105,7 +132,7 @@ Triggers:
 | `OCI_HOST` | VM public IP (or DNS) |
 | `OCI_USER` | `opc` (Oracle Linux) or `ubuntu` |
 | `OCI_SSH_PRIVATE_KEY` | Private key matching the public key uploaded to the instance. Include the `-----BEGIN/END-----` lines. |
-| `OCI_SSH_KNOWN_HOSTS` | *Optional but recommended.* Output of `ssh-keyscan -H <host>` run from a trusted machine. If unset, the workflow falls back to TOFU and prints a warning. |
+| `OCI_SSH_KNOWN_HOSTS` | *Optional but recommended.* Lines for the VM's host keys. Best generated from the VM itself: `ssh <user>@<host> 'for f in /etc/ssh/ssh_host_*_key.pub; do read -r alg key _ < "$f"; printf "%s %s %s\n" "<host>" "$alg" "$key"; done'`. If unset, the workflow falls back to TOFU via `ssh-keyscan` and prints a warning. |
 | `GHCR_PULL_TOKEN` | *Optional.* PAT with `read:packages` scope. Only needed if the GHCR package is private. |
 
 ### Environment
@@ -115,10 +142,10 @@ Settings → Environments to opt into approval gates, deployment branches, or
 environment-scoped secrets. Without it, the workflow still runs — `environment:`
 just becomes a label.
 
-### What the deploy does on the VM
+### What `remote-deploy.sh` does on the VM
 
-1. `docker login ghcr.io` (only if `GHCR_PULL_TOKEN` is set).
-2. Writes `/opt/repo-chat-bot/compose.ghcr.yml` pinning `image: ghcr.io/<repo>:<tag>` with `pull_policy: always`.
+1. `docker login ghcr.io` (only if `GHCR_TOKEN` is set).
+2. Writes `/opt/repo-chat-bot/compose.ghcr.yml` pinning `image: <IMAGE>` with `pull_policy: always`.
 3. `docker compose -f compose.yml -f compose.ghcr.yml pull bot`
 4. `docker compose -f compose.yml -f compose.ghcr.yml up -d --remove-orphans bot`
 5. Tails the last 40 log lines for confirmation.

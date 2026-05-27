@@ -19,6 +19,7 @@
 #   AVAILABILITY_DOMAIN   <auto-picked>
 #   BOT_REPO_URL          ""                cloned into /opt/repo-chat-bot/src on first boot
 #   KB_REPO_URL           ""                cloned into /opt/repo-chat-bot/repo on first boot
+#   DEPLOY_USER           opc               OS user that owns /opt/repo-chat-bot and runs docker
 #
 # Usage:
 #   COMPARTMENT_OCID=ocid1.compartment.oc1... \
@@ -53,6 +54,7 @@ MEMORY_GB="${MEMORY_GB:-6}"
 BOOT_VOLUME_GB="${BOOT_VOLUME_GB:-50}"
 BOT_REPO_URL="${BOT_REPO_URL:-}"
 KB_REPO_URL="${KB_REPO_URL:-}"
+DEPLOY_USER="${DEPLOY_USER:-opc}"
 
 echo ">> Resolving availability domain..."
 if [ -z "${AVAILABILITY_DOMAIN:-}" ]; then
@@ -88,6 +90,7 @@ sed -e "/{{COMPOSE_YML}}/{
 }" \
     -e "s|{{BOT_REPO_URL}}|${BOT_REPO_URL}|g" \
     -e "s|{{KB_REPO_URL}}|${KB_REPO_URL}|g" \
+    -e "s|{{DEPLOY_USER}}|${DEPLOY_USER}|g" \
     "$SCRIPT_DIR/cloud-init.tmpl.yml" > "$RENDERED"
 
 echo ">> Launching instance '$INSTANCE_NAME' (${OCPUS} OCPU / ${MEMORY_GB} GB)..."
@@ -118,12 +121,12 @@ cat <<EOF
 
   Instance:   $INSTANCE_ID
   Public IP:  $PUBLIC_IP
-  SSH:        ssh opc@$PUBLIC_IP
+  SSH:        ssh $DEPLOY_USER@$PUBLIC_IP
 
 Cloud-init runs on first boot (~1-2 minutes). Then:
 
-  ssh opc@$PUBLIC_IP
-  sudo -u opc nano /opt/repo-chat-bot/.env       # fill in tokens
+  ssh $DEPLOY_USER@$PUBLIC_IP
+  sudo -u $DEPLOY_USER nano /opt/repo-chat-bot/.env       # fill in tokens
   cd /opt/repo-chat-bot && docker compose up -d --build
   docker compose logs -f bot
 

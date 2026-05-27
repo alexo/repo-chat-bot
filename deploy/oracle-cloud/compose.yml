@@ -5,6 +5,8 @@ services:
     container_name: repo-chat-bot
     restart: unless-stopped
     env_file: .env
+    environment:
+      REPO_PATH: /app/repo
     volumes:
       - ./repo:/app/repo:ro
     logging:
