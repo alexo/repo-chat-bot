@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -32,8 +33,8 @@ type app struct {
 }
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Printf("No .env file found or error loading it: %v", err)
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		log.Printf("Warning: .env file present but failed to load: %v", err)
 	}
 
 	cfg, err := LoadConfig()
