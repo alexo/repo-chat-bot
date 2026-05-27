@@ -21,6 +21,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Set at build time via -ldflags (see Dockerfile + docker-publish.yml).
+var (
+	Version     = "dev"
+	ReleaseDate = "unknown"
+)
+
 type chatState struct {
 	mu      sync.Mutex
 	history []ai.Turn
@@ -36,6 +42,8 @@ func main() {
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		log.Printf("Warning: .env file present but failed to load: %v", err)
 	}
+
+	log.Printf("repo-chat-bot version=%s release_date=%s", Version, ReleaseDate)
 
 	cfg, err := LoadConfig()
 	if err != nil {

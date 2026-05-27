@@ -59,6 +59,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Compute build metadata
+        id: build_meta
+        run: |
+          echo "version=sha-$(printf '%s' '${{ github.sha }}' | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "release_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -72,6 +78,9 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+          build-args: |
+            VERSION=${{ steps.build_meta.outputs.version }}
+            RELEASE_DATE=${{ steps.build_meta.outputs.release_date }}
 
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
