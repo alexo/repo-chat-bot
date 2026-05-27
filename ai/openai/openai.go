@@ -72,7 +72,7 @@ var toolSchemas = []map[string]any{
 
 type message struct {
 	Role      string     `json:"role"`
-	Content   string     `json:"content,omitempty"`
+	Content   string     `json:"content"`
 	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 	ToolID    string     `json:"tool_call_id,omitempty"`
 }
