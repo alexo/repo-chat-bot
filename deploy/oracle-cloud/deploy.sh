@@ -41,6 +41,14 @@ echo "→ Deploying ${IMAGE} to ${OCI_USER}@${OCI_HOST}"
 SSH_OPTS=()
 [ -n "${SSH_KEY:-}" ] && SSH_OPTS+=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
 
+# Ship the repo's compose.yml to the VM on every deploy so port mappings,
+# volume mounts, and other compose-level config stay in lockstep with the
+# checked-in version. The repo is the source of truth — any hand-edits to
+# /opt/repo-chat-bot/compose.yml on the VM will be overwritten here.
+scp ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} \
+  "${SCRIPT_DIR}/compose.yml" \
+  "${OCI_USER}@${OCI_HOST}:/opt/repo-chat-bot/compose.yml"
+
 ssh ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "${OCI_USER}@${OCI_HOST}" \
   env IMAGE="$IMAGE" \
       GHCR_USER="${GHCR_USER:-$USER}" \

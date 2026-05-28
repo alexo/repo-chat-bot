@@ -114,24 +114,13 @@ git clone <your-kb-repo-url> repo
 
 ## Step 5 — Drop a `compose.yml`
 
-Use the one from `deploy/oracle-cloud/compose.yml` in your bot repo, or paste this into `/opt/repo-chat-bot/compose.yml`:
+Copy `deploy/oracle-cloud/compose.yml` from the repo to `/opt/repo-chat-bot/compose.yml` (do not paste an inline snippet — the file in the repo is the source of truth, and `deploy.sh` overwrites the VM copy on every automated deploy).
 
-```yaml
-services:
-  bot:
-    build:
-      context: ./src
-    container_name: repo-chat-bot
-    restart: unless-stopped
-    env_file: .env
-    volumes:
-      - ./repo:/app/repo:ro
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+```bash
+scp deploy/oracle-cloud/compose.yml ubuntu@<vm>:/opt/repo-chat-bot/compose.yml
 ```
+
+> If you switch to the automated `deploy.sh` flow later, this same file gets `scp`'d to the VM on every deploy. Edit it in the repo, not on the VM — direct edits disappear on the next deploy.
 
 ---
 

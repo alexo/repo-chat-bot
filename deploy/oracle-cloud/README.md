@@ -12,8 +12,10 @@ For the click-by-click manual path, see [docs/deploy-oracle-cloud.md](../../docs
 | `provision.sh` | Calls `oci compute instance launch` with a rendered cloud-init. |
 | `cloud-init.tmpl.yml` | First-boot config: installs Docker, lays out `/opt/repo-chat-bot`, drops `.env` stub and a 6-hour KB-refresh cron. |
 | `compose.yml` | Bot service (`build: ./src`, mounts `./repo` read-only, pins `REPO_PATH=/app/repo`). |
-| `deploy.sh` | Canonical deploy entry point. Streams `remote-deploy.sh` to the VM over SSH. Used by both laptop and CI. |
+| `deploy.sh` | Canonical deploy entry point. `scp`s the latest `compose.yml` to the VM, then streams `remote-deploy.sh` over SSH. Used by both laptop and CI. |
 | `remote-deploy.sh` | Runs on the VM: writes the GHCR compose override and `docker compose pull && up -d`. Never stored on the VM — piped in via stdin on every deploy. |
+
+> **`compose.yml` is deploy-managed.** Every `deploy.sh` run overwrites `/opt/repo-chat-bot/compose.yml` with the version from the repo. Any hand-edits made directly on the VM disappear on the next deploy — change the file in the repo and let the deploy ship it.
 
 ## Prerequisites
 
