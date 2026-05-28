@@ -6,8 +6,29 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
+
+// runHealthcheckProbe issues a single GET to the local /healthz endpoint and
+// exits 0 on HTTP 200, 1 otherwise. Used by `docker compose` healthcheck on
+// distroless images where wget/curl aren't available.
+func runHealthcheckProbe() {
+	port := os.Getenv("HEALTHCHECK_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
 
 func startHealthcheck(ctx context.Context, cfg *Config) {
 	srv := &http.Server{

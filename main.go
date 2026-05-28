@@ -39,6 +39,14 @@ type app struct {
 }
 
 func main() {
+	// Self-probe mode: docker compose healthcheck invokes the binary with
+	// `--healthcheck` to test the /healthz endpoint from inside the container
+	// (distroless has no wget/curl). Exits before any normal init runs.
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		runHealthcheckProbe()
+		return
+	}
+
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
 		log.Printf("Warning: .env file present but failed to load: %v", err)
 	}

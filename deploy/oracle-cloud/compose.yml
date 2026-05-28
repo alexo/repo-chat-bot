@@ -21,3 +21,20 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Container healthcheck — invokes the bot binary with --healthcheck, which
+    # GETs /healthz on localhost and exits 0/1. Assumes HEALTHCHECK_ENABLED=true
+    # in .env; set test: ["NONE"] to disable, or remove the block, if you've
+    # turned the in-process HTTP server off.
+    healthcheck:
+      test: ["CMD", "/app/repo-chat-bot", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # Resource limits — keep a runaway prompt / LLM-tool loop / memory leak
+    # from taking down the host. Bump if you actually need more headroom.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'

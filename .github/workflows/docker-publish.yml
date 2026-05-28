@@ -89,3 +89,17 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      # Scan the published image for HIGH/CRITICAL CVEs. `ignore-unfixed`
+      # keeps base-image vulns without a fix available from breaking CI —
+      # only actionable findings fail the pipeline. PRs don't push, so they
+      # don't scan; the next push to main will.
+      - name: Scan published image for vulnerabilities
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          vuln-type: 'os,library'
