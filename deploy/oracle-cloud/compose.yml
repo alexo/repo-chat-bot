@@ -7,6 +7,13 @@ services:
     env_file: .env
     environment:
       REPO_PATH: /app/repo
+    # Healthcheck port. Loopback-only by default — reachable from inside the VM
+    # and via SSH tunnel (`ssh -L 8080:127.0.0.1:8080 ...`) but not the public
+    # internet. Switch to "8080:8080" to allow external probes (OCI LB, etc.);
+    # remember to also open the host firewall and VCN security list.
+    # Requires HEALTHCHECK_ENABLED=true in .env to actually bind a listener.
+    ports:
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./repo:/app/repo:ro
     logging:
