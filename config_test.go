@@ -22,11 +22,14 @@ func setEnv(t *testing.T, m map[string]string) {
 		"LLM_MODEL",
 		"REPO_PATH",
 		"ALLOWED_USER_IDS",
+		"KBSYNC_ENABLED",
 		"KB_STORAGE_PROVIDER",
 		"KB_SYNC_BASE_DIR",
 		"KB_SYNC_INTERVAL",
 		"KB_SYNC_DELETE",
 		"KB_SYNC_ON_START",
+		"HEALTHCHECK_ENABLED",
+		"HEALTHCHECK_PORT",
 	}
 	for _, k := range keys {
 		t.Setenv(k, m[k])
@@ -47,14 +50,14 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.LLMProvider != "anthropic" {
-			t.Errorf("default provider: got %q, want anthropic", cfg.LLMProvider)
+		if cfg.AI.Provider != "anthropic" {
+			t.Errorf("default provider: got %q, want anthropic", cfg.AI.Provider)
 		}
-		if cfg.LLMModel != "claude-sonnet-4-6" {
-			t.Errorf("default model: got %q, want claude-sonnet-4-6", cfg.LLMModel)
+		if cfg.AI.Model != "claude-sonnet-4-6" {
+			t.Errorf("default model: got %q, want claude-sonnet-4-6", cfg.AI.Model)
 		}
-		if !cfg.AllowedUserIDs[42] {
-			t.Errorf("user 42 missing from AllowedUserIDs")
+		if !cfg.Telegram.AllowedUserIDs[42] {
+			t.Errorf("user 42 missing from Telegram.AllowedUserIDs")
 		}
 	})
 
@@ -72,8 +75,8 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.LLMModel != "claude-opus-4-7" {
-			t.Errorf("model: got %q, want claude-opus-4-7", cfg.LLMModel)
+		if cfg.AI.Model != "claude-opus-4-7" {
+			t.Errorf("model: got %q, want claude-opus-4-7", cfg.AI.Model)
 		}
 	})
 
@@ -92,11 +95,11 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.LLMProvider != "openai" {
-			t.Errorf("provider: got %q, want openai", cfg.LLMProvider)
+		if cfg.AI.Provider != "openai" {
+			t.Errorf("provider: got %q, want openai", cfg.AI.Provider)
 		}
-		if cfg.LLMModel != "gpt-4o" {
-			t.Errorf("model: got %q, want gpt-4o", cfg.LLMModel)
+		if cfg.AI.Model != "gpt-4o" {
+			t.Errorf("model: got %q, want gpt-4o", cfg.AI.Model)
 		}
 	})
 
@@ -114,7 +117,7 @@ func TestLoadConfig_Success(t *testing.T) {
 			t.Fatalf("unexpected: %v", err)
 		}
 		for _, id := range []int64{1, 2, 3} {
-			if !cfg.AllowedUserIDs[id] {
+			if !cfg.Telegram.AllowedUserIDs[id] {
 				t.Errorf("user %d not allowed", id)
 			}
 		}
@@ -133,10 +136,10 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.TelegramBotToken != "" {
-			t.Errorf("telegram token: got %q, want empty", cfg.TelegramBotToken)
+		if cfg.Telegram.BotToken != "" {
+			t.Errorf("telegram token: got %q, want empty", cfg.Telegram.BotToken)
 		}
-		if cfg.SlackAppToken != "xapp-1" || cfg.SlackBotToken != "xoxb-1" {
+		if cfg.Slack.AppToken != "xapp-1" || cfg.Slack.BotToken != "xoxb-1" {
 			t.Errorf("slack tokens not loaded: %+v", cfg)
 		}
 	})
@@ -147,11 +150,11 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.TelegramEnabled || cfg.SlackEnabled || cfg.AIEnabled {
-			t.Errorf("expected all toggles disabled, got tg=%v slack=%v ai=%v", cfg.TelegramEnabled, cfg.SlackEnabled, cfg.AIEnabled)
+		if cfg.Telegram.Enabled || cfg.Slack.Enabled || cfg.AI.Enabled || cfg.KBSync.Enabled || cfg.Healthcheck.Enabled {
+			t.Errorf("expected all toggles disabled, got %+v", cfg)
 		}
-		if cfg.LLMProvider != "" {
-			t.Errorf("LLMProvider should not be defaulted when AI disabled, got %q", cfg.LLMProvider)
+		if cfg.AI.Provider != "" {
+			t.Errorf("AI.Provider should not be defaulted when AI disabled, got %q", cfg.AI.Provider)
 		}
 	})
 
@@ -171,10 +174,10 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.TelegramEnabled {
+		if cfg.Telegram.Enabled {
 			t.Errorf("telegram should be disabled")
 		}
-		if !cfg.SlackEnabled {
+		if !cfg.Slack.Enabled {
 			t.Errorf("slack should be enabled")
 		}
 	})
@@ -195,10 +198,10 @@ func TestLoadConfig_Success(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if !cfg.AllowedUserIDs[42] {
-			t.Errorf("user 42 missing from AllowedUserIDs")
+		if !cfg.Telegram.AllowedUserIDs[42] {
+			t.Errorf("user 42 missing from Telegram.AllowedUserIDs")
 		}
-		if cfg.SlackAppToken == "" || cfg.SlackBotToken == "" {
+		if cfg.Slack.AppToken == "" || cfg.Slack.BotToken == "" {
 			t.Errorf("slack tokens not loaded: %+v", cfg)
 		}
 	})
@@ -218,8 +221,32 @@ func TestLoadConfig_KBSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.KBStorageProvider != "" {
-			t.Errorf("expected sync disabled, got provider=%q", cfg.KBStorageProvider)
+		if cfg.KBSync.Enabled {
+			t.Errorf("expected sync disabled")
+		}
+	})
+
+	t.Run("provider ignored when toggle off", func(t *testing.T) {
+		// KB_STORAGE_PROVIDER alone is no longer enough — KBSYNC_ENABLED must be true.
+		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
+			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
+			"LLM_API_KEY":         "key",
+			"REPO_PATH":           "/tmp/repo",
+			"ALLOWED_USER_IDS":    "42",
+			"KB_STORAGE_PROVIDER": "s3",
+			"KB_SYNC_BASE_DIR":    "/tmp/kb",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.KBSync.Enabled {
+			t.Errorf("expected sync disabled when KBSYNC_ENABLED unset")
+		}
+		if cfg.KBSync.Interval != 0 {
+			t.Errorf("interval should be zero when disabled, got %v", cfg.KBSync.Interval)
 		}
 	})
 
@@ -230,6 +257,7 @@ func TestLoadConfig_KBSync(t *testing.T) {
 			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
+			"KBSYNC_ENABLED":      "true",
 			"KB_STORAGE_PROVIDER": "s3",
 			"KB_SYNC_BASE_DIR":    "/tmp/kb",
 		})
@@ -237,20 +265,20 @@ func TestLoadConfig_KBSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.KBStorageProvider != "s3" {
-			t.Errorf("provider: got %q, want s3", cfg.KBStorageProvider)
+		if cfg.KBSync.Provider != "s3" {
+			t.Errorf("provider: got %q, want s3", cfg.KBSync.Provider)
 		}
-		if cfg.KBSyncInterval != time.Hour {
-			t.Errorf("interval default: got %v, want 1h", cfg.KBSyncInterval)
+		if cfg.KBSync.Interval != time.Hour {
+			t.Errorf("interval default: got %v, want 1h", cfg.KBSync.Interval)
 		}
-		if !cfg.KBSyncDelete {
+		if !cfg.KBSync.Delete {
 			t.Errorf("delete default: got false, want true")
 		}
-		if !cfg.KBSyncOnStart {
+		if !cfg.KBSync.OnStart {
 			t.Errorf("on-start default: got false, want true")
 		}
-		if cfg.RepoPath != "/tmp/kb/current" {
-			t.Errorf("repo path derived: got %q, want /tmp/kb/current", cfg.RepoPath)
+		if cfg.AI.RepoPath != "/tmp/kb/current" {
+			t.Errorf("repo path derived: got %q, want /tmp/kb/current", cfg.AI.RepoPath)
 		}
 	})
 
@@ -261,6 +289,7 @@ func TestLoadConfig_KBSync(t *testing.T) {
 			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
+			"KBSYNC_ENABLED":      "true",
 			"KB_STORAGE_PROVIDER": "oci",
 			"KB_SYNC_BASE_DIR":    "/tmp/kb",
 			"KB_SYNC_INTERVAL":    "15m",
@@ -271,13 +300,13 @@ func TestLoadConfig_KBSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected: %v", err)
 		}
-		if cfg.KBSyncInterval != 15*time.Minute {
-			t.Errorf("interval: got %v, want 15m", cfg.KBSyncInterval)
+		if cfg.KBSync.Interval != 15*time.Minute {
+			t.Errorf("interval: got %v, want 15m", cfg.KBSync.Interval)
 		}
-		if cfg.KBSyncDelete {
+		if cfg.KBSync.Delete {
 			t.Errorf("delete: got true, want false")
 		}
-		if cfg.KBSyncOnStart {
+		if cfg.KBSync.OnStart {
 			t.Errorf("on-start: got true, want false")
 		}
 	})
@@ -289,6 +318,7 @@ func TestLoadConfig_KBSync(t *testing.T) {
 			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
+			"KBSYNC_ENABLED":      "true",
 			"KB_STORAGE_PROVIDER": "gcs",
 			"KB_SYNC_BASE_DIR":    "/tmp/kb",
 		})
@@ -298,13 +328,31 @@ func TestLoadConfig_KBSync(t *testing.T) {
 		}
 	})
 
-	t.Run("base dir required when provider set", func(t *testing.T) {
+	t.Run("provider required when enabled", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
+			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
+			"LLM_API_KEY":        "key",
+			"REPO_PATH":          "/tmp/repo",
+			"ALLOWED_USER_IDS":   "42",
+			"KBSYNC_ENABLED":     "true",
+			"KB_SYNC_BASE_DIR":   "/tmp/kb",
+		})
+		_, err := LoadConfig()
+		if err == nil || !strings.Contains(err.Error(), "KB_STORAGE_PROVIDER") {
+			t.Fatalf("expected provider error, got %v", err)
+		}
+	})
+
+	t.Run("base dir required when enabled", func(t *testing.T) {
 		setEnv(t, map[string]string{
 			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
 			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
+			"KBSYNC_ENABLED":      "true",
 			"KB_STORAGE_PROVIDER": "s3",
 		})
 		_, err := LoadConfig()
@@ -320,6 +368,7 @@ func TestLoadConfig_KBSync(t *testing.T) {
 			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
+			"KBSYNC_ENABLED":      "true",
 			"KB_STORAGE_PROVIDER": "s3",
 			"KB_SYNC_BASE_DIR":    "/tmp/kb",
 			"KB_SYNC_INTERVAL":    "garbage",
@@ -327,6 +376,73 @@ func TestLoadConfig_KBSync(t *testing.T) {
 		_, err := LoadConfig()
 		if err == nil || !strings.Contains(err.Error(), "KB_SYNC_INTERVAL") {
 			t.Fatalf("expected interval error, got %v", err)
+		}
+	})
+}
+
+func TestLoadConfig_Healthcheck(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		setEnv(t, map[string]string{})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.Healthcheck.Enabled {
+			t.Errorf("expected healthcheck disabled by default")
+		}
+	})
+
+	t.Run("enabled with default port", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"HEALTHCHECK_ENABLED": "true",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if !cfg.Healthcheck.Enabled {
+			t.Errorf("expected healthcheck enabled")
+		}
+		if cfg.Healthcheck.Port != "8080" {
+			t.Errorf("default port: got %q, want 8080", cfg.Healthcheck.Port)
+		}
+	})
+
+	t.Run("custom port honored", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"HEALTHCHECK_ENABLED": "true",
+			"HEALTHCHECK_PORT":    "9090",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.Healthcheck.Port != "9090" {
+			t.Errorf("port: got %q, want 9090", cfg.Healthcheck.Port)
+		}
+	})
+
+	t.Run("invalid port rejected", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"HEALTHCHECK_ENABLED": "true",
+			"HEALTHCHECK_PORT":    "99999",
+		})
+		_, err := LoadConfig()
+		if err == nil || !strings.Contains(err.Error(), "HEALTHCHECK_PORT") {
+			t.Fatalf("expected port error, got %v", err)
+		}
+	})
+
+	t.Run("port ignored when disabled", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"HEALTHCHECK_PORT": "garbage",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.Healthcheck.Enabled {
+			t.Errorf("expected healthcheck disabled")
 		}
 	})
 }

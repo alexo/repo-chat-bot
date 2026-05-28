@@ -39,17 +39,45 @@ Notable behavior:
 
 ## 2.2 `config.go` (configuration)
 
-`LoadConfig()` reads and validates:
+`LoadConfig()` populates a grouped `*Config` whose top-level fields each model one feature family:
 
-- `TELEGRAM_BOT_TOKEN`
-- `SLACK_APP_TOKEN`
-- `SLACK_BOT_TOKEN`
-- `SLACK_DEBUG`
-- `LLM_PROVIDER`
-- `LLM_API_KEY`
-- `LLM_MODEL`
-- `REPO_PATH`
-- `ALLOWED_USER_IDS`
+```go
+type Config struct {
+    Telegram    TelegramConfig
+    Slack       SlackConfig
+    AI          AIConfig
+    KBSync      KBSyncConfig
+    Healthcheck HealthcheckConfig
+}
+```
+
+Feature toggles (all default to `false`):
+
+- `TELEGRAM_ENABLED` → `cfg.Telegram.Enabled`
+- `SLACK_ENABLED` → `cfg.Slack.Enabled`
+- `AI_ENABLED` → `cfg.AI.Enabled`
+- `KBSYNC_ENABLED` → `cfg.KBSync.Enabled`
+- `HEALTHCHECK_ENABLED` → `cfg.Healthcheck.Enabled`
+
+Per-feature env vars:
+
+- Telegram: `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS` (parsed into `cfg.Telegram.AllowedUserIDs`) — both required when Telegram is enabled.
+- Slack: `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN` (both required when Slack is enabled), `SLACK_DEBUG`.
+- AI: `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_DEBUG`, `REPO_PATH` — `LLM_API_KEY` and `REPO_PATH` required when AI is enabled.
+- KBSync: `KB_STORAGE_PROVIDER` (`s3` or `oci`), `KB_SYNC_BASE_DIR`, `KB_SYNC_INTERVAL` (default `1h`), `KB_SYNC_DELETE` (default `true`), `KB_SYNC_ON_START` (default `true`). Provider + base dir are required when KBSync is enabled. When KBSync is on and `REPO_PATH` is empty, `cfg.AI.RepoPath` is derived as `<BaseDir>/current`.
+- Healthcheck: `HEALTHCHECK_PORT` (default `8080`; validated only when Healthcheck is enabled).
+
+Validation invariants:
+
+- Enabling any chat platform requires `AI_ENABLED=true` (a bot without an LLM is rejected at startup).
+- All disabled features skip their token/credential checks entirely.
+- With every toggle `false` and no env vars, the binary boots into a fully headless idle state — useful for KB-sync-only deployments or smoke tests.
+
+On startup, a single line summarises toggle state for log grepping:
+
+```
+config toggles: ai=false telegram=false slack=false kbsync=false healthcheck=false
+```
 
 Default provider/model logic:
 
@@ -134,6 +162,51 @@ Thread behavior:
 
 - First mention in a thread tracks that thread key.
 - Subsequent user messages in the same thread can be answered without mention.
+
+## 2.8 `healthcheck.go` (ops HTTP server)
+
+Optional HTTP server, off by default. When `HEALTHCHECK_ENABLED=true`:
+
+- Binds `0.0.0.0:$HEALTHCHECK_PORT` (default `8080`) on startup.
+- Uses `ReadHeaderTimeout: 5s` to mitigate Slowloris-style attacks.
+- Listens on a goroutine; a sibling goroutine waits on the root `context.Context` and triggers `http.Server.Shutdown` with a 5-second grace period when the process receives `SIGINT` / `SIGTERM`.
+
+### Routes
+
+| Route | Response | Purpose |
+|-------|----------|---------|
+| `GET /healthz` | `200 OK`, body `ok` | Liveness probe. Confirms the process is up and the HTTP server is responsive. Used by Docker `HEALTHCHECK`, Fly checks, OCI LB probes, K8s `livenessProbe`. |
+| `GET /featurez` | `200 OK`, JSON body | Feature-toggle snapshot for the running deployment. |
+
+`/featurez` payload — booleans only, no values:
+
+```json
+{
+  "telegram": false,
+  "slack": false,
+  "ai": false,
+  "kbsync": false,
+  "healthcheck": true
+}
+```
+
+### Why booleans only on `/featurez`
+
+The endpoint is reachable by anyone who can hit the port. Returning toggle state is benign (it largely mirrors the deterministic `config toggles:` startup log line that any operator can grep), but returning *values* would be reconnaissance for an attacker — and accidentally leaking a token, an internal path, or a model name would be a real incident.
+
+The contract is enforced by a sensitive-value leak guard test in `healthcheck_test.go`: it builds a `Config` populated with fake tokens, paths, model names, and ports, hits `/featurez`, and fails if any of those substrings appear in the response. Any future addition to `/featurez` that accidentally serialises a value (instead of a bool) will be caught by this test.
+
+### Naming
+
+Endpoint naming follows the Google/Kubernetes ops-endpoint convention (`/healthz`, `/readyz`, `/livez`, `/varz`, `/statusz`) — the `z` suffix is a namespacing trick to keep ops routes from colliding with application routes. `/featurez` is a project-local addition in the same spirit.
+
+### Typical consumers
+
+- Docker `HEALTHCHECK` directive → `/healthz`.
+- Fly.io / Railway / Render platform health probes → `/healthz`.
+- Oracle Cloud Load Balancer backend health checks → `/healthz`.
+- Kubernetes `livenessProbe` → `/healthz` (and `readinessProbe`, once `/readyz` is added).
+- Operators / runbooks / smoke tests during deploys → `/featurez` to confirm the right toggles are live before traffic shifts.
 
 ## 3. Runtime Data Flow
 
@@ -264,6 +337,7 @@ Current limits:
 ## 7. Suggested Evolution Path
 
 - Persist conversation state (Redis).
-- Add observability (`slog`, metrics, health endpoint).
+- Add observability (`slog`, metrics).
+- Extend the existing healthcheck with `/readyz` reflecting KB-sync state.
 - Add configurable KB sync/update mechanism.
 - Introduce optional indexing/vector retrieval for very large multi-repo knowledge bases.

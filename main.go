@@ -50,51 +50,55 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	log.Printf("config toggles: ai=%t telegram=%t slack=%t kbsync=%t",
-		cfg.AIEnabled, cfg.TelegramEnabled, cfg.SlackEnabled, cfg.KBStorageProvider != "")
+	log.Printf("config toggles: ai=%t telegram=%t slack=%t kbsync=%t healthcheck=%t",
+		cfg.AI.Enabled, cfg.Telegram.Enabled, cfg.Slack.Enabled, cfg.KBSync.Enabled, cfg.Healthcheck.Enabled)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if cfg.KBStorageProvider != "" {
-		syncer, err := buildSyncer(ctx, cfg)
+	if cfg.Healthcheck.Enabled {
+		startHealthcheck(ctx, cfg)
+	}
+
+	if cfg.KBSync.Enabled {
+		syncer, err := buildSyncer(ctx, &cfg.KBSync)
 		if err != nil {
 			log.Fatalf("kbsync: %v", err)
 		}
-		if cfg.KBSyncOnStart {
-			log.Printf("kbsync: initial sync from %s (this may take a moment)", cfg.KBStorageProvider)
+		if cfg.KBSync.OnStart {
+			log.Printf("kbsync: initial sync from %s (this may take a moment)", cfg.KBSync.Provider)
 			if err := syncer.SyncNow(ctx); err != nil {
 				log.Fatalf("kbsync: initial sync: %v", err)
 			}
 		}
 		go syncer.Start(ctx)
-		log.Printf("kbsync: background sync every %s (delete=%t)", cfg.KBSyncInterval, cfg.KBSyncDelete)
+		log.Printf("kbsync: background sync every %s (delete=%t)", cfg.KBSync.Interval, cfg.KBSync.Delete)
 	}
 
 	a := &app{cfg: cfg}
 
-	if cfg.AIEnabled {
-		repo, err := NewRepo(cfg.RepoPath)
+	if cfg.AI.Enabled {
+		repo, err := NewRepo(cfg.AI.RepoPath)
 		if err != nil {
 			log.Fatalf("repo: %v", err)
 		}
-		log.Printf("SUCCESS: Loaded REPO_PATH from config: %s", cfg.RepoPath)
+		log.Printf("SUCCESS: Loaded REPO_PATH from config: %s", cfg.AI.RepoPath)
 		log.Printf("SUCCESS: Repo root resolved to: %s", repo.Root())
-		log.Printf("SUCCESS: LLM provider: %s", cfg.LLMProvider)
-		log.Printf("SUCCESS: LLM model: %s", cfg.LLMModel)
-		if cfg.LLMDebug {
+		log.Printf("SUCCESS: LLM provider: %s", cfg.AI.Provider)
+		log.Printf("SUCCESS: LLM model: %s", cfg.AI.Model)
+		if cfg.AI.Debug {
 			log.Printf("SUCCESS: LLM debug mode enabled")
 		}
 
-		llm, err := newLLM(cfg, repo)
+		llm, err := newLLM(&cfg.AI, repo)
 		if err != nil {
 			log.Fatalf("provider: %v", err)
 		}
 		a.llm = llm
 	}
 
-	if cfg.TelegramEnabled {
-		b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
+	if cfg.Telegram.Enabled {
+		b, err := bot.New(cfg.Telegram.BotToken, bot.WithDefaultHandler(a.handleMessage))
 		if err != nil {
 			log.Printf("WARNING: Telegram bot failed to initialize: %v. Continuing without Telegram.", err)
 		} else {
@@ -103,8 +107,8 @@ func main() {
 		}
 	}
 
-	if cfg.SlackEnabled {
-		slackBot, err := NewSlackBot(cfg.SlackAppToken, cfg.SlackBotToken, cfg.SlackDebug, a)
+	if cfg.Slack.Enabled {
+		slackBot, err := NewSlackBot(cfg.Slack.AppToken, cfg.Slack.BotToken, cfg.Slack.Debug, a)
 		if err != nil {
 			log.Printf("failed to start slack bot: %v", err)
 		} else {
@@ -118,38 +122,38 @@ func main() {
 	log.Println("shutting down...")
 }
 
-func newLLM(cfg *Config, kb ai.KnowledgeBase) (ai.Provider, error) {
-	switch cfg.LLMProvider {
+func newLLM(cfg *AIConfig, kb ai.KnowledgeBase) (ai.Provider, error) {
+	switch cfg.Provider {
 	case "anthropic", "":
-		return anthropic.New(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+		return anthropic.New(cfg.APIKey, cfg.Model, cfg.Debug, kb), nil
 	case "github":
-		return openai.NewGitHubProvider(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+		return openai.NewGitHubProvider(cfg.APIKey, cfg.Model, cfg.Debug, kb), nil
 	case "openrouter":
-		return openai.NewOpenRouterProvider(cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMDebug, kb), nil
+		return openai.NewOpenRouterProvider(cfg.APIKey, cfg.Model, cfg.Debug, kb), nil
 	default:
-		return nil, fmt.Errorf("unknown LLM provider %q", cfg.LLMProvider)
+		return nil, fmt.Errorf("unknown LLM provider %q", cfg.Provider)
 	}
 }
 
-func buildSyncer(ctx context.Context, cfg *Config) (*kbsync.Syncer, error) {
+func buildSyncer(ctx context.Context, cfg *KBSyncConfig) (*kbsync.Syncer, error) {
 	var backend provider.Provider
 	var err error
-	switch cfg.KBStorageProvider {
+	switch cfg.Provider {
 	case "s3":
 		backend, err = s3.NewProvider(ctx, s3.ConfigFromEnv())
 	case "oci":
 		backend, err = oci.NewProvider(ctx, oci.ConfigFromEnv())
 	default:
-		return nil, fmt.Errorf("unknown provider %q", cfg.KBStorageProvider)
+		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}
 	if err != nil {
 		return nil, err
 	}
 	return kbsync.NewSyncer(kbsync.Options{
-		BaseDir:  cfg.KBSyncBaseDir,
+		BaseDir:  cfg.BaseDir,
 		Provider: backend,
-		Interval: cfg.KBSyncInterval,
-		Delete:   cfg.KBSyncDelete,
+		Interval: cfg.Interval,
+		Delete:   cfg.Delete,
 	}), nil
 }
 
@@ -159,7 +163,7 @@ func (a *app) handleMessage(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	msg := update.Message
 
-	if !a.cfg.AllowedUserIDs[msg.From.ID] {
+	if !a.cfg.Telegram.AllowedUserIDs[msg.From.ID] {
 		log.Printf("denied: user %d (%s) chat %d", msg.From.ID, msg.From.Username, msg.Chat.ID)
 		_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID: msg.Chat.ID,

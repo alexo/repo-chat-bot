@@ -23,7 +23,7 @@ This bot needs ~0.5 OCPU, ~1 GB RAM, persistent disk for `/app/repo`, and outbou
 1. **A1.Flex capacity is constrained.** "Out of host capacity" is common on launch. Retry, or pick a different Availability Domain in your region.
 2. **Reserve the public IP.** The default public IP is ephemeral and can change after some failure modes. Reserving one is free (1 per tenancy).
 3. **iptables FORWARD REJECT on Oracle Linux.** OL ships a `REJECT` on `FORWARD`. Docker normally inserts its bridge rules above it; if you see container egress issues, restart Docker (`sudo systemctl restart docker`).
-4. **Security lists ≠ host firewall.** Allowing a port in the VCN security list does not open it on the host. This bot only needs outbound, so it usually doesn't matter, but it's the #1 OCI surprise.
+4. **Security lists ≠ host firewall.** Allowing a port in the VCN security list does not open it on the host. This bot only needs outbound, so it usually doesn't matter — except when you flip on `HEALTHCHECK_ENABLED` and want an OCI Load Balancer or external probe to reach `/healthz` and `/featurez` on `HEALTHCHECK_PORT`. Then you need *both* the VCN security list rule *and* the host firewall (`firewalld` / `ufw`) open. It's the #1 OCI surprise. `/featurez` returns booleans only (no secrets), so external exposure is low-risk reconnaissance value; still, scope the security list rule tightly when possible.
 
 ---
 
@@ -168,6 +168,8 @@ docker compose logs -f bot
 You should see:
 
 ```
+repo-chat-bot version=... release_date=...
+config toggles: ai=true telegram=false slack=true kbsync=false healthcheck=false
 SUCCESS: Loaded REPO_PATH from config: /app/repo
 SUCCESS: Repo root resolved to: /app/repo
 SUCCESS: LLM provider: openrouter
@@ -175,6 +177,8 @@ slack bot starting
 repo-chat-bot is running (press Ctrl+C to exit)
 Slack bot: connected (hello received)
 ```
+
+The `config toggles:` line is your one-line summary of what's enabled — grep for it in logs to confirm the deployed instance matches your `.env`.
 
 `restart: unless-stopped` plus `systemctl enable docker` means the container comes back automatically after a reboot. Verify with `sudo reboot`, wait, SSH in, `docker compose ps`.
 

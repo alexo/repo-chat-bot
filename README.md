@@ -98,10 +98,51 @@ S3 credentials use the standard AWS chain (env vars / `~/.aws/credentials` /
 IAM role). OCI uses `~/.oci/config` by default, or set `KB_OCI_AUTH=instance`
 to use instance principal on an OCI compute VM.
 
+## Healthcheck endpoint
+
+The bot can expose a tiny HTTP server with a `/healthz` liveness probe — useful for Docker `HEALTHCHECK`, Fly checks, Oracle Cloud load-balancer probes, and Kubernetes liveness/readiness wiring.
+
+Enable it via env vars:
+
+```env
+HEALTHCHECK_ENABLED=true
+HEALTHCHECK_PORT=8080       # optional, defaults to 8080
+```
+
+When enabled, the server binds to all interfaces (`0.0.0.0:$HEALTHCHECK_PORT`) and responds on two routes:
+
+```
+GET /healthz   →  200 OK
+               →  body: "ok"
+
+GET /featurez  →  200 OK
+               →  body: {"telegram":false,"slack":false,"ai":false,"kbsync":false,"healthcheck":true}
+```
+
+`/featurez` reports feature-toggle state as booleans only — no tokens, paths, model names, or ports — useful when log access is gated and you need to confirm what's actually enabled in a deployment.
+
+Verify locally:
+
+```bash
+HEALTHCHECK_ENABLED=true ./repo-chat-bot &
+curl -s http://localhost:8080/healthz    # → ok
+curl -s http://localhost:8080/featurez   # → {"ai":false,"healthcheck":true,...}
+```
+
+Docker integration:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -qO- http://localhost:8080/healthz || exit 1
+```
+
+The `z` suffix follows the Google/Kubernetes convention (`/healthz`, `/readyz`, `/livez`) — a namespacing trick so ops endpoints don't collide with application routes. The endpoint is disabled by default; turning it on is the only way it binds a port.
+
 ## Hardening for production
 
 - Swap in-memory `sync.Map` history for Redis (Upstash, Railway Redis). Persist last ~20 turns per chat.
 - Strip Claude's Markdown to Telegram-compatible MarkdownV2 before sending, then set `parse_mode`.
-- Add structured logging (`slog`) and a `/health` HTTP endpoint if your platform wants one.
+- Add structured logging (`slog`) for production observability.
 - Rate-limit per chat to cap accidental API spend.
 - For private/sensitive repos: pin `ALLOWED_USER_IDS` tightly and never expose the webhook publicly.
+- If you enable the healthcheck endpoint on a public VM, restrict the port at the firewall/security-list level. `/healthz` is harmless and `/featurez` returns booleans only (no tokens, paths, model names, or ports), but neither needs to be world-reachable — scope the rule to your orchestrator's probe range.
