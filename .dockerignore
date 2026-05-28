@@ -9,9 +9,12 @@
 *.iml
 *.swp
 
-# Build artefacts that should NOT end up in the image's build context
+# Build artefacts that should NOT end up in the image's build context.
+# Note: `repo-chat-bot-linux` is the cross-compiled binary Dockerfile.local
+# COPYs in — do NOT exclude it with a wildcard.
 repo-chat-bot
-repo-chat-bot-*
+repo-chat-bot-darwin*
+repo-chat-bot-windows*
 *.log
 build.log
 
