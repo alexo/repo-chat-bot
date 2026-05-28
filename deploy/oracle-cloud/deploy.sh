@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REMOTE_SCRIPT="${SCRIPT_DIR}/remote-deploy.sh"
 
 : "${OCI_HOST:?OCI_HOST env var required}"
-OCI_USER="${OCI_USER:-ubuntu}"
+OCI_USER="${OCI_USER:-opc}"
 TAG="${1:-latest}"
 
 if [ -z "${IMAGE_NAME:-}" ]; then

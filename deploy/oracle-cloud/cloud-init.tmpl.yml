@@ -15,15 +15,36 @@ write_files:
     owner: {{DEPLOY_USER}}:{{DEPLOY_USER}}
     content: |
       # Fill these in, then run: cd /opt/repo-chat-bot && docker compose up -d --build
+
+      # --- Feature toggles (set to true to enable) ---
+      TELEGRAM_ENABLED=false
+      SLACK_ENABLED=true
+      AI_ENABLED=true
+      KBSYNC_ENABLED=false
+      HEALTHCHECK_ENABLED=false
+      HEALTHCHECK_PORT=8080
+
+      # --- Telegram (required when TELEGRAM_ENABLED=true) ---
       TELEGRAM_BOT_TOKEN=
       ALLOWED_USER_IDS=
-      LLM_PROVIDER=openrouter
-      LLM_API_KEY=
-      LLM_MODEL=openai/gpt-4o-mini
-      REPO_PATH=/app/repo
+
+      # --- Slack (required when SLACK_ENABLED=true) ---
       SLACK_APP_TOKEN=
       SLACK_BOT_TOKEN=
       SLACK_DEBUG=false
+
+      # --- LLM (required when AI_ENABLED=true) ---
+      LLM_PROVIDER=openrouter
+      LLM_API_KEY=
+      LLM_MODEL=openai/gpt-4o-mini
+      LLM_DEBUG=false
+
+      # --- Knowledge base ---
+      REPO_PATH=/app/repo
+
+      # --- KB sync (required when KBSYNC_ENABLED=true) ---
+      # KB_STORAGE_PROVIDER=s3
+      # KB_SYNC_BASE_DIR=/app/kbsync
 
   - path: /etc/cron.d/repo-chat-bot-kb-refresh
     permissions: '0644'
