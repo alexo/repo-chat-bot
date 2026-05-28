@@ -120,10 +120,26 @@ tag from the trigger, configures SSH from secrets, and invokes the same
 
 Triggers:
 
-- **Auto** — on successful completion of "Publish Docker image" on `main`. The
-  exact commit SHA is deployed (tag `sha-<short>`).
-- **Manual** — `workflow_dispatch` with an `image_tag` input (defaults to
-  `latest`). Use this to roll back: pass a previous `sha-<short>` or `v<x.y.z>`.
+- **Manual** *(always available)* — `workflow_dispatch` with an `image_tag`
+  input (defaults to `latest`). Use this for the first deploy and for rollbacks:
+  pass a previous `sha-<short>` or `v<x.y.z>`.
+- **Auto** *(opt-in, off by default)* — on successful completion of "Publish
+  Docker image" on `main`, the exact commit SHA is deployed (tag `sha-<short>`).
+  Gated by the `AUTO_DEPLOY_ORACLE_CLOUD` repository variable: auto-deploy only
+  fires when it's set to `"true"`. Anything else (unset, `"false"`, empty) →
+  the auto path is skipped and deploys stay manual.
+
+### Enabling auto-deploy
+
+Settings → Secrets and variables → Actions → **Variables** tab → New
+repository variable:
+
+| Variable | Value | Effect |
+|----------|-------|--------|
+| `AUTO_DEPLOY_ORACLE_CLOUD` | `true` | Every successful image build on `main` deploys to OCI. |
+| `AUTO_DEPLOY_ORACLE_CLOUD` | unset / anything else | Image builds publish to GHCR but do **not** auto-deploy. Manual dispatch still works. |
+
+No YAML edit needed to flip it — variables apply on the next workflow run.
 
 ### Required secrets (Settings → Secrets and variables → Actions)
 

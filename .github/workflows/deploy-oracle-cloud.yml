@@ -18,7 +18,15 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # Manual dispatch always runs. Auto-deploy after a successful image build
+    # only fires when the AUTO_DEPLOY_ORACLE_CLOUD repository variable is "true"
+    # (Settings → Secrets and variables → Actions → Variables). Unset/anything-
+    # else → auto-deploy is skipped, deploys must be triggered manually.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       vars.AUTO_DEPLOY_ORACLE_CLOUD == 'true')
     runs-on: ubuntu-latest
     environment:
       name: production
