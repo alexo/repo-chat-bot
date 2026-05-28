@@ -11,9 +11,12 @@ import (
 func setEnv(t *testing.T, m map[string]string) {
 	t.Helper()
 	keys := []string{
+		"TELEGRAM_ENABLED",
 		"TELEGRAM_BOT_TOKEN",
+		"SLACK_ENABLED",
 		"SLACK_APP_TOKEN",
 		"SLACK_BOT_TOKEN",
+		"AI_ENABLED",
 		"LLM_PROVIDER",
 		"LLM_API_KEY",
 		"LLM_MODEL",
@@ -33,7 +36,9 @@ func setEnv(t *testing.T, m map[string]string) {
 func TestLoadConfig_Success(t *testing.T) {
 	t.Run("required vars set, provider and model default", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
 			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
 			"LLM_API_KEY":        "key",
 			"REPO_PATH":          "/tmp/repo",
 			"ALLOWED_USER_IDS":   "42",
@@ -55,7 +60,9 @@ func TestLoadConfig_Success(t *testing.T) {
 
 	t.Run("custom model honored", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
 			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
 			"LLM_API_KEY":        "key",
 			"LLM_MODEL":          "claude-opus-4-7",
 			"REPO_PATH":          "/tmp/repo",
@@ -72,7 +79,9 @@ func TestLoadConfig_Success(t *testing.T) {
 
 	t.Run("custom provider honored", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
 			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
 			"LLM_PROVIDER":       "openai",
 			"LLM_API_KEY":        "key",
 			"LLM_MODEL":          "gpt-4o",
@@ -93,7 +102,9 @@ func TestLoadConfig_Success(t *testing.T) {
 
 	t.Run("multiple user IDs with whitespace", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
 			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
 			"LLM_API_KEY":        "key",
 			"REPO_PATH":          "/tmp/repo",
 			"ALLOWED_USER_IDS":   " 1 , 2,3 ",
@@ -111,8 +122,10 @@ func TestLoadConfig_Success(t *testing.T) {
 
 	t.Run("slack only — no Telegram token, no ALLOWED_USER_IDS", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"SLACK_ENABLED":   "true",
 			"SLACK_APP_TOKEN": "xapp-1",
 			"SLACK_BOT_TOKEN": "xoxb-1",
+			"AI_ENABLED":      "true",
 			"LLM_API_KEY":     "key",
 			"REPO_PATH":       "/tmp/repo",
 		})
@@ -128,11 +141,52 @@ func TestLoadConfig_Success(t *testing.T) {
 		}
 	})
 
-	t.Run("telegram + slack both configured", func(t *testing.T) {
+	t.Run("everything disabled — empty env boots", func(t *testing.T) {
+		setEnv(t, map[string]string{})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.TelegramEnabled || cfg.SlackEnabled || cfg.AIEnabled {
+			t.Errorf("expected all toggles disabled, got tg=%v slack=%v ai=%v", cfg.TelegramEnabled, cfg.SlackEnabled, cfg.AIEnabled)
+		}
+		if cfg.LLMProvider != "" {
+			t.Errorf("LLMProvider should not be defaulted when AI disabled, got %q", cfg.LLMProvider)
+		}
+	})
+
+	t.Run("disabled platform tokens are ignored", func(t *testing.T) {
+		// Telegram tokens linger from a previous session, but only Slack is enabled.
+		// LoadConfig should not validate Telegram fields (no ALLOWED_USER_IDS required).
 		setEnv(t, map[string]string{
-			"TELEGRAM_BOT_TOKEN": "tok",
+			"TELEGRAM_BOT_TOKEN": "stale-tok",
+			"SLACK_ENABLED":      "true",
 			"SLACK_APP_TOKEN":    "xapp-1",
 			"SLACK_BOT_TOKEN":    "xoxb-1",
+			"AI_ENABLED":         "true",
+			"LLM_API_KEY":        "key",
+			"REPO_PATH":          "/tmp/repo",
+		})
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+		if cfg.TelegramEnabled {
+			t.Errorf("telegram should be disabled")
+		}
+		if !cfg.SlackEnabled {
+			t.Errorf("slack should be enabled")
+		}
+	})
+
+	t.Run("telegram + slack both configured", func(t *testing.T) {
+		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
+			"TELEGRAM_BOT_TOKEN": "tok",
+			"SLACK_ENABLED":      "true",
+			"SLACK_APP_TOKEN":    "xapp-1",
+			"SLACK_BOT_TOKEN":    "xoxb-1",
+			"AI_ENABLED":         "true",
 			"LLM_API_KEY":        "key",
 			"REPO_PATH":          "/tmp/repo",
 			"ALLOWED_USER_IDS":   "42",
@@ -153,7 +207,9 @@ func TestLoadConfig_Success(t *testing.T) {
 func TestLoadConfig_KBSync(t *testing.T) {
 	t.Run("disabled by default", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":   "true",
 			"TELEGRAM_BOT_TOKEN": "tok",
+			"AI_ENABLED":         "true",
 			"LLM_API_KEY":        "key",
 			"REPO_PATH":          "/tmp/repo",
 			"ALLOWED_USER_IDS":   "42",
@@ -169,7 +225,9 @@ func TestLoadConfig_KBSync(t *testing.T) {
 
 	t.Run("s3 provider with defaults", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
 			"KB_STORAGE_PROVIDER": "s3",
@@ -198,7 +256,9 @@ func TestLoadConfig_KBSync(t *testing.T) {
 
 	t.Run("explicit overrides honored", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
 			"KB_STORAGE_PROVIDER": "oci",
@@ -224,7 +284,9 @@ func TestLoadConfig_KBSync(t *testing.T) {
 
 	t.Run("invalid provider rejected", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
 			"KB_STORAGE_PROVIDER": "gcs",
@@ -238,7 +300,9 @@ func TestLoadConfig_KBSync(t *testing.T) {
 
 	t.Run("base dir required when provider set", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
 			"KB_STORAGE_PROVIDER": "s3",
@@ -251,7 +315,9 @@ func TestLoadConfig_KBSync(t *testing.T) {
 
 	t.Run("invalid interval rejected", func(t *testing.T) {
 		setEnv(t, map[string]string{
+			"TELEGRAM_ENABLED":    "true",
 			"TELEGRAM_BOT_TOKEN":  "tok",
+			"AI_ENABLED":          "true",
 			"LLM_API_KEY":         "key",
 			"ALLOWED_USER_IDS":    "42",
 			"KB_STORAGE_PROVIDER": "s3",
@@ -272,25 +338,19 @@ func TestLoadConfig_Errors(t *testing.T) {
 		errSubstr string
 	}{
 		{
-			name: "no chat platform configured",
+			name: "telegram enabled but token missing",
 			env: map[string]string{
-				"LLM_API_KEY": "key",
-				"REPO_PATH":   "/tmp/repo",
+				"TELEGRAM_ENABLED": "true",
+				"LLM_API_KEY":      "key",
+				"REPO_PATH":        "/tmp/repo",
+				"ALLOWED_USER_IDS": "42",
 			},
-			errSubstr: "at least one chat platform",
+			errSubstr: "TELEGRAM_BOT_TOKEN is required",
 		},
 		{
-			name: "slack tokens half-set (app only)",
+			name: "slack enabled but app token missing",
 			env: map[string]string{
-				"SLACK_APP_TOKEN": "xapp-1",
-				"LLM_API_KEY":     "key",
-				"REPO_PATH":       "/tmp/repo",
-			},
-			errSubstr: "SLACK_APP_TOKEN and SLACK_BOT_TOKEN",
-		},
-		{
-			name: "slack tokens half-set (bot only)",
-			env: map[string]string{
+				"SLACK_ENABLED":   "true",
 				"SLACK_BOT_TOKEN": "xoxb-1",
 				"LLM_API_KEY":     "key",
 				"REPO_PATH":       "/tmp/repo",
@@ -298,27 +358,46 @@ func TestLoadConfig_Errors(t *testing.T) {
 			errSubstr: "SLACK_APP_TOKEN and SLACK_BOT_TOKEN",
 		},
 		{
-			name: "missing LLM_API_KEY",
+			name: "slack enabled but bot token missing",
 			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN": "tok",
-				"REPO_PATH":          "/tmp/repo",
-				"ALLOWED_USER_IDS":   "42",
+				"SLACK_ENABLED":   "true",
+				"SLACK_APP_TOKEN": "xapp-1",
+				"LLM_API_KEY":     "key",
+				"REPO_PATH":       "/tmp/repo",
 			},
-			errSubstr: "LLM_API_KEY",
+			errSubstr: "SLACK_APP_TOKEN and SLACK_BOT_TOKEN",
 		},
 		{
-			name: "missing REPO_PATH",
+			name: "chat enabled but AI disabled",
 			env: map[string]string{
+				"TELEGRAM_ENABLED":   "true",
 				"TELEGRAM_BOT_TOKEN": "tok",
-				"LLM_API_KEY":        "key",
 				"ALLOWED_USER_IDS":   "42",
 			},
-			errSubstr: "REPO_PATH",
+			errSubstr: "AI_ENABLED=true is required when a chat platform is enabled",
 		},
 		{
-			name: "telegram configured but ALLOWED_USER_IDS missing",
+			name: "AI enabled but LLM_API_KEY missing",
 			env: map[string]string{
+				"AI_ENABLED": "true",
+				"REPO_PATH":  "/tmp/repo",
+			},
+			errSubstr: "LLM_API_KEY is required",
+		},
+		{
+			name: "AI enabled but REPO_PATH missing",
+			env: map[string]string{
+				"AI_ENABLED":  "true",
+				"LLM_API_KEY": "key",
+			},
+			errSubstr: "REPO_PATH is required",
+		},
+		{
+			name: "telegram enabled but ALLOWED_USER_IDS missing",
+			env: map[string]string{
+				"TELEGRAM_ENABLED":   "true",
 				"TELEGRAM_BOT_TOKEN": "tok",
+				"AI_ENABLED":         "true",
 				"LLM_API_KEY":        "key",
 				"REPO_PATH":          "/tmp/repo",
 			},
@@ -327,7 +406,9 @@ func TestLoadConfig_Errors(t *testing.T) {
 		{
 			name: "non-numeric user ID",
 			env: map[string]string{
+				"TELEGRAM_ENABLED":   "true",
 				"TELEGRAM_BOT_TOKEN": "tok",
+				"AI_ENABLED":         "true",
 				"LLM_API_KEY":        "key",
 				"REPO_PATH":          "/tmp/repo",
 				"ALLOWED_USER_IDS":   "42,notanumber",

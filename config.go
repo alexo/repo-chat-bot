@@ -11,10 +11,13 @@ import (
 )
 
 type Config struct {
+	TelegramEnabled  bool
 	TelegramBotToken string
+	SlackEnabled     bool
 	SlackAppToken    string
 	SlackBotToken    string
 	SlackDebug       bool
+	AIEnabled        bool
 	LLMDebug         bool
 	LLMProvider      string
 	LLMAPIKey        string
@@ -34,10 +37,13 @@ type Config struct {
 
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
+		TelegramEnabled:   parseBoolEnv("TELEGRAM_ENABLED"),
 		TelegramBotToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		SlackEnabled:      parseBoolEnv("SLACK_ENABLED"),
 		SlackAppToken:     os.Getenv("SLACK_APP_TOKEN"),
 		SlackBotToken:     os.Getenv("SLACK_BOT_TOKEN"),
 		SlackDebug:        parseBoolEnv("SLACK_DEBUG"),
+		AIEnabled:         parseBoolEnv("AI_ENABLED"),
 		LLMDebug:          parseBoolEnv("LLM_DEBUG"),
 		LLMProvider:       os.Getenv("LLM_PROVIDER"),
 		LLMAPIKey:         os.Getenv("LLM_API_KEY"),
@@ -47,31 +53,32 @@ func LoadConfig() (*Config, error) {
 		KBStorageProvider: strings.ToLower(strings.TrimSpace(os.Getenv("KB_STORAGE_PROVIDER"))),
 		KBSyncBaseDir:     os.Getenv("KB_SYNC_BASE_DIR"),
 	}
-	telegramConfigured := cfg.TelegramBotToken != ""
-	slackAppSet := cfg.SlackAppToken != ""
-	slackBotSet := cfg.SlackBotToken != ""
-	if slackAppSet != slackBotSet {
-		return nil, errors.New("SLACK_APP_TOKEN and SLACK_BOT_TOKEN must both be set or both empty")
+	if cfg.TelegramEnabled && cfg.TelegramBotToken == "" {
+		return nil, errors.New("TELEGRAM_BOT_TOKEN is required when TELEGRAM_ENABLED=true")
 	}
-	slackConfigured := slackAppSet && slackBotSet
-	if !telegramConfigured && !slackConfigured {
-		return nil, errors.New("at least one chat platform must be configured: set TELEGRAM_BOT_TOKEN, or both SLACK_APP_TOKEN and SLACK_BOT_TOKEN")
+	if cfg.SlackEnabled && (cfg.SlackAppToken == "" || cfg.SlackBotToken == "") {
+		return nil, errors.New("SLACK_APP_TOKEN and SLACK_BOT_TOKEN are required when SLACK_ENABLED=true")
+	}
+	if (cfg.TelegramEnabled || cfg.SlackEnabled) && !cfg.AIEnabled {
+		return nil, errors.New("AI_ENABLED=true is required when a chat platform is enabled")
 	}
 
-	if cfg.LLMAPIKey == "" {
-		return nil, errors.New("LLM_API_KEY is required")
-	}
 	if err := loadKBSyncConfig(cfg); err != nil {
 		return nil, err
 	}
-	if cfg.RepoPath == "" {
-		return nil, errors.New("REPO_PATH is required")
-	}
-	if cfg.LLMProvider == "" {
-		cfg.LLMProvider = "anthropic"
-	}
-	if cfg.LLMModel == "" {
-		cfg.LLMModel = defaultModelFor(cfg.LLMProvider)
+	if cfg.AIEnabled {
+		if cfg.LLMAPIKey == "" {
+			return nil, errors.New("LLM_API_KEY is required when AI_ENABLED=true")
+		}
+		if cfg.RepoPath == "" {
+			return nil, errors.New("REPO_PATH is required when AI_ENABLED=true")
+		}
+		if cfg.LLMProvider == "" {
+			cfg.LLMProvider = "anthropic"
+		}
+		if cfg.LLMModel == "" {
+			cfg.LLMModel = defaultModelFor(cfg.LLMProvider)
+		}
 	}
 	for _, s := range strings.Split(os.Getenv("ALLOWED_USER_IDS"), ",") {
 		s = strings.TrimSpace(s)
@@ -84,8 +91,8 @@ func LoadConfig() (*Config, error) {
 		}
 		cfg.AllowedUserIDs[id] = true
 	}
-	if telegramConfigured && len(cfg.AllowedUserIDs) == 0 {
-		return nil, errors.New("ALLOWED_USER_IDS must list at least one Telegram user ID when TELEGRAM_BOT_TOKEN is set")
+	if cfg.TelegramEnabled && len(cfg.AllowedUserIDs) == 0 {
+		return nil, errors.New("ALLOWED_USER_IDS must list at least one Telegram user ID when TELEGRAM_ENABLED=true")
 	}
 	return cfg, nil
 }

@@ -50,6 +50,9 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	log.Printf("config toggles: ai=%t telegram=%t slack=%t kbsync=%t",
+		cfg.AIEnabled, cfg.TelegramEnabled, cfg.SlackEnabled, cfg.KBStorageProvider != "")
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -68,26 +71,29 @@ func main() {
 		log.Printf("kbsync: background sync every %s (delete=%t)", cfg.KBSyncInterval, cfg.KBSyncDelete)
 	}
 
-	repo, err := NewRepo(cfg.RepoPath)
-	if err != nil {
-		log.Fatalf("repo: %v", err)
-	}
-	log.Printf("SUCCESS: Loaded REPO_PATH from config: %s", cfg.RepoPath)
-	log.Printf("SUCCESS: Repo root resolved to: %s", repo.Root())
-	log.Printf("SUCCESS: LLM provider: %s", cfg.LLMProvider)
-	log.Printf("SUCCESS: LLM model: %s", cfg.LLMModel)
-	if cfg.LLMDebug {
-		log.Printf("SUCCESS: LLM debug mode enabled")
+	a := &app{cfg: cfg}
+
+	if cfg.AIEnabled {
+		repo, err := NewRepo(cfg.RepoPath)
+		if err != nil {
+			log.Fatalf("repo: %v", err)
+		}
+		log.Printf("SUCCESS: Loaded REPO_PATH from config: %s", cfg.RepoPath)
+		log.Printf("SUCCESS: Repo root resolved to: %s", repo.Root())
+		log.Printf("SUCCESS: LLM provider: %s", cfg.LLMProvider)
+		log.Printf("SUCCESS: LLM model: %s", cfg.LLMModel)
+		if cfg.LLMDebug {
+			log.Printf("SUCCESS: LLM debug mode enabled")
+		}
+
+		llm, err := newLLM(cfg, repo)
+		if err != nil {
+			log.Fatalf("provider: %v", err)
+		}
+		a.llm = llm
 	}
 
-	llm, err := newLLM(cfg, repo)
-	if err != nil {
-		log.Fatalf("provider: %v", err)
-	}
-
-	a := &app{cfg: cfg, llm: llm}
-
-	if cfg.TelegramBotToken != "" {
+	if cfg.TelegramEnabled {
 		b, err := bot.New(cfg.TelegramBotToken, bot.WithDefaultHandler(a.handleMessage))
 		if err != nil {
 			log.Printf("WARNING: Telegram bot failed to initialize: %v. Continuing without Telegram.", err)
@@ -97,7 +103,7 @@ func main() {
 		}
 	}
 
-	if cfg.SlackAppToken != "" && cfg.SlackBotToken != "" {
+	if cfg.SlackEnabled {
 		slackBot, err := NewSlackBot(cfg.SlackAppToken, cfg.SlackBotToken, cfg.SlackDebug, a)
 		if err != nil {
 			log.Printf("failed to start slack bot: %v", err)
