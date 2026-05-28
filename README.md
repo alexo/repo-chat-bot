@@ -34,13 +34,42 @@ The bot talks to the Anthropic Messages API directly over HTTPS — no Go SDK de
 
 ## Local run
 
+Two paths — pick by whether you want to exercise the Go binary directly or the production-equivalent docker image.
+
+### Bare Go (fastest iteration)
+
 ```bash
 cp .env.example .env
-# fill in TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, REPO_PATH, ALLOWED_USER_IDS
+# fill in TELEGRAM_BOT_TOKEN, LLM_API_KEY, REPO_PATH, ALLOWED_USER_IDS, AI_ENABLED=true
 export $(grep -v '^#' .env | xargs)
 go mod tidy
 go run .
 ```
+
+### Docker (mirrors production)
+
+`scripts/build-local.sh` cross-compiles the bot on the host and bakes it into the distroless runtime image. The host-side compile is what makes this work behind corporate TLS-interception proxies — the in-container `Dockerfile` path needs CA trust that local builds usually don't have.
+
+```bash
+./scripts/build-local.sh                # → repo-chat-bot:local (~13 MB)
+
+docker run --rm \
+  --env-file .env \
+  -v "$PWD:/app/repo:ro" \
+  -p 127.0.0.1:8080:8080 \
+  repo-chat-bot:local
+```
+
+Pass a tag to label the image, or force an arch when you're building on Apple Silicon for an amd64 VM:
+
+```bash
+./scripts/build-local.sh dev-2026-01    # → repo-chat-bot:dev-2026-01
+GOARCH=amd64 ./scripts/build-local.sh   # cross-arch
+```
+
+CI uses the standard multi-stage `Dockerfile` (`docker build .`); that's the canonical path when network access to the Go module proxy is unrestricted.
+
+### Getting credentials
 
 Get your Telegram user ID from `@userinfobot`. Create the bot via `@BotFather`. `REPO_PATH` is the absolute path to any git checkout on your machine — the bot only reads inside that root.
 

@@ -1,5 +1,6 @@
 .env
 repo-chat-bot
+repo-chat-bot-linux
 *.log
 .DS_Store
 .idea
